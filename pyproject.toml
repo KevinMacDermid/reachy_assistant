@@ -1,5 +1,5 @@
 [project]
-name = "reachy-mini"
+name = "reachy_mini_experiments"
 version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.12"
