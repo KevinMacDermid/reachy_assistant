@@ -12,16 +12,14 @@ DANCE_MOVES = RecordedMoves("pollen-robotics/reachy-mini-dances-library")
 def main():
     """
     Main conversation App
-
-    ** Start the daemon before running this **
-
     """
-    wake_move = EMOTION_MOVES.get("welcoming1")
+    # Tried starting the daemon here but it wouldn't work, start it separately
     reachy = ReachyMini()
-    # ToDo: should force this to use the robot's audio
+    reachy.goto_sleep()
+    # ToDo: should force this to use the robot's audio channel
     listen_for_wakeword()
     print("Wakeword Received!")
-    reachy.play_move(wake_move)
+    reachy.wake_up()
 
 
 if __name__ == '__main__':

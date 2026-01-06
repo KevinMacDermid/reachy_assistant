@@ -8,7 +8,8 @@ FORMAT = pyaudio.paInt16
 CHANNELS = 1
 RATE = 16000
 CHUNK = 1280
-WAKE_MODEL_NAME = "hey_jarvis_v0.1"
+#WAKE_MODEL_NAME = "hey_jarvis_v0.1"
+WAKE_MODEL_NAME = "hey_luna"
 WAKE_MODEL = Model(
    wakeword_model_paths=[os.path.join(os.path.dirname(__file__), "..", "models", f"{WAKE_MODEL_NAME}.onnx")]
 )
