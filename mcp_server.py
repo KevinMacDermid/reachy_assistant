@@ -3,12 +3,12 @@ from multiprocessing.resource_sharer import DupFd
 from mcp.server.fastmcp import FastMCP
 import subprocess
 from dataclasses import dataclass
+from pydantic import BaseModel
 
 mcp = FastMCP("Tools Server")
 DEFAULT_IP = "192.168.1.201"
 
-@dataclass
-class LightState:
+class LightState(BaseModel):
     """ Tracks the state of an LED. Defaults are the default on state"""
     on_or_off: str = "on"  # this is a string to match the CLI
     cct: bool = True  # this is the nice warm white
@@ -36,47 +36,45 @@ def get_light_state() -> LightState:
 
 
 @mcp.tool()
-def set_light_state(
-        on_or_off: str  = LiteralString["on", "off"],
-        cct:bool
-):
-    def process_request(self, messages: list[dict]) -> str:
-        # Got inconsistent behaviour unless I kept only the last message
-        props = self._get_properties(get_message_content(messages[-1]))
-        if type(props) == str:
-            return props
+def set_light_state(light_state: LightState) -> str:
+    """
+    Set the state of the (LED) lights
 
-        return_msg = "I was unsure what to do with the lights."
-        state = self.prev_state
-        if "on_or_off" in props and props["on_or_off"] == "off":
-            state.on_or_off = "off"
-            return_msg = "I have turned off the lights as you requested."
+    Args:
+        light_state: The desired state of the LED lights
 
-        # Turn on with no details, assumes default
-        if props == {"on_or_off": "on"} or "default" in props and props["default"]:
-            state.on_or_off = "on"
-            state.cct = True
-            state.brightness = 100
-            return_msg = "I have turned on your usual lights."
+    Returns:
+        A message indicating the result of the operation
+    """
+    # Build the command based on the light state
+    cmd_parts = [f'flux_led {DEFAULT_IP}']
 
-        if "brightness" in props:
-            state.on_or_off = "on"
-            state.brightness = props["brightness"]
-            new_color = tuple([int(props["brightness"]/100 * x) for x in state.color])
-            state.color = new_color
-            return_msg = "I have adjusted the lights as you requested"
+    if light_state.on_or_off == "off":
+        cmd_parts.append('--off')
+    else:
+        cmd_parts.append('--on')
 
-        if "color" in props:
-            state.cct = False
-            state.on_or_off = "on"  # on is implied when asking for a color
-            r, g, b = props["color"]
-            state.color = (r, g, b)
-            return_msg = "I have adjusted the lights as you requested"
+        if light_state.cct:
+            # Use CCT mode with brightness
+            cmd_parts.append(f'-w {light_state.brightness}')
+        else:
+            # Use RGB color mode
+            r, g, b = light_state.color
+            cmd_parts.append(f'-c {r},{g},{b}')
 
-        self.prev_state = state    # no need to cache here, it's just used for the listening call
-        self._set_led_state(state)
-        return return_msg + ". Is there anything else I can assist with?"
+    cmd = ' '.join(cmd_parts)
 
+    try:
+        subprocess.check_output(cmd, shell=True)
+
+        if light_state.on_or_off == "off":
+            return "Lights turned off successfully"
+        elif light_state.cct:
+            return f"Lights set to warm white at {light_state.brightness}% brightness"
+        else:
+            return f"Lights set to color RGB {light_state.color}"
+    except subprocess.CalledProcessError as e:
+        return f"Error setting light state: {str(e)}"
 
 
 if __name__ == "__main__":
