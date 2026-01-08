@@ -1,14 +1,32 @@
 from src.wakeword import listen_for_wakeword
-from reachy_mini import ReachyMini
 from reachy_mini.motion.recorded_move import RecordedMove, RecordedMoves
 from dotenv import load_dotenv
+import asyncio
+import base64
+import os
+import numpy as np
+from openai import AsyncOpenAI
+from openai.types.realtime import (
+    RealtimeSessionCreateRequest,
+    RealtimeSessionCreateRequestParam,
+    RealtimeAudioConfig,
+    RealtimeAudioConfigInput,
+    AudioTranscription,
+    RealtimeAudioInputTurnDetection, RealtimeAudioConfigParam, RealtimeAudioConfigInputParam, AudioTranscriptionParam
+)
+from openai.types.realtime.realtime_audio_formats_param import AudioPCM
+from openai.types.realtime.realtime_audio_input_turn_detection_param import SemanticVad
+from reachy_mini import ReachyMini
+from scipy.signal import resample
 import logging
 
 
 logger = logging.getLogger(__name__)
 EMOTION_MOVES = RecordedMoves("pollen-robotics/reachy-mini-emotions-library")
 DANCE_MOVES = RecordedMoves("pollen-robotics/reachy-mini-dances-library")
+TARGET_SAMPLE_RATE = 24000
 _ = load_dotenv()
+
 
 
 def main():
@@ -25,6 +43,80 @@ def main():
     audio_frame = reachy.media.get_audio_sample()
 
 
+async def transcribe_audio():
+    # 1. Initialize Robot
+    robot = ReachyMini()
+    robot.media.start_recording()
+    mic_rate = robot.media.get_input_audio_samplerate()
+
+    # 2. Initialize OpenAI Client
+    client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
+
+    logger.info("Connecting to OpenAI...")
+    async with client.realtime.connect(model="gpt-4o-realtime-preview") as conn:
+        # Configure session for transcription
+
+        session_config = RealtimeSessionCreateRequestParam(
+            type="realtime",
+            output_modalities=["text"],
+            model="gpt-4o-transcribe",
+            audio=RealtimeAudioConfigParam(
+                input=RealtimeAudioConfigInputParam(
+                    format=AudioPCM(),
+                    transcription=AudioTranscriptionParam(model="gpt-4o-transcribe"),
+                    turn_detection=SemanticVad(type="semantic_vad")   # This has higher latency but should only respond when it makes sense
+
+                ),
+                output=None,  # No TTS output; remove or expand if you eventually want audio back
+            ),
+        )
+        await conn.session.update(session=session_config)
+
+        async def send_audio():
+            """Continuously poll mic and send to OpenAI."""
+            try:
+                while True:
+                    audio_chunk = robot.media.get_audio_sample()
+                    if audio_chunk is not None:
+                        # Resample to 24kHz if necessary
+                        if mic_rate != TARGET_SAMPLE_RATE:
+                            num_samples = int(len(audio_chunk) * TARGET_SAMPLE_RATE / mic_rate)
+                            audio_chunk = resample(audio_chunk, num_samples).astype(np.int16)
+
+                        # Encode and send
+                        base64_audio = base64.b64encode(audio_chunk.tobytes()).decode("utf-8")
+                        await conn.input_audio_buffer.append(audio=base64_audio)
+
+                    await asyncio.sleep(0.01)
+            except Exception as e:
+                logger.error(f"Error sending audio: {e}")
+
+        async def receive_events():
+            """Listen for transcription events."""
+            async for event in conn:
+                # Partial transcription (real-time)
+                if event.type == "conversation.item.input_audio_transcription.partial":
+                    print(f"Partial: {event.transcript}", end="\r")
+
+                # Final transcription
+                elif event.type == "conversation.item.input_audio_transcription.completed":
+                    print(f"\nFinal: {event.transcript}")
+
+                elif event.type == "error":
+                    print(f"\nError: {str(event.error)}")
+
+        logger.info("Listening... (Ctrl+C to stop)")
+        try:
+            # Run both loops concurrently
+            await asyncio.gather(send_audio(), receive_events())
+        except asyncio.CancelledError:
+            pass
+        finally:
+            robot.media.stop_recording()
+
+
 if __name__ == '__main__':
-    main()
+    logging.basicConfig(level=logging.INFO)
+    #main()
+    asyncio.run(transcribe_audio())
 
