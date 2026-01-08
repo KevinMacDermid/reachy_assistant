@@ -8,4 +8,7 @@ dependencies = [
     "openwakeword==0.4.0",
     "pyaudio==0.2.14",
     "mcp>=1.25.0",
+    "scipy-stubs~=1.16.3",
+    "python-dotenv",
+    "openai"
 ]
