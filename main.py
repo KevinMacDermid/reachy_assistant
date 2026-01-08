@@ -15,7 +15,7 @@ from openai.types.realtime import (
     RealtimeAudioInputTurnDetection, RealtimeAudioConfigParam, RealtimeAudioConfigInputParam, AudioTranscriptionParam
 )
 from openai.types.realtime.realtime_audio_formats_param import AudioPCM
-from openai.types.realtime.realtime_audio_input_turn_detection_param import SemanticVad
+from openai.types.realtime.realtime_audio_input_turn_detection_param import SemanticVad, ServerVad
 from reachy_mini import ReachyMini
 from scipy.signal import resample
 import logging
@@ -67,7 +67,7 @@ async def transcribe_audio():
                         rate = 24000
                     ),
                     transcription=AudioTranscriptionParam(model="gpt-4o-transcribe"),
-                    turn_detection=SemanticVad(type="semantic_vad")   # This has higher latency but should only respond when it makes sense
+                    turn_detection=ServerVad(type="server_vad")
 
                 ),
             ),
@@ -77,19 +77,34 @@ async def transcribe_audio():
         async def send_audio():
             """Continuously poll mic and send to OpenAI."""
             try:
+                samples_to_commit = 0
                 while True:
                     audio_chunk = robot.media.get_audio_sample()
-                    if audio_chunk is not None:
-                        # Resample to 24kHz if necessary
-                        if mic_rate != TARGET_SAMPLE_RATE:
-                            num_samples = int(len(audio_chunk) * TARGET_SAMPLE_RATE / mic_rate)
-                            audio_chunk = resample(audio_chunk, num_samples).astype(np.int16)
+                    if audio_chunk is None:
+                        await asyncio.sleep(0.01)
+                        continue
 
-                        # Encode and send
-                        base64_audio = base64.b64encode(audio_chunk.tobytes()).decode("utf-8")
-                        await conn.input_audio_buffer.append(audio=base64_audio)
+                    # Take single channel
+                    if audio_chunk.ndim == 2:
+                        audio_chunk = audio_chunk[:, 0]
 
-                    await asyncio.sleep(0.01)
+                    # Resample to 24kHz if necessary
+                    if mic_rate != TARGET_SAMPLE_RATE:
+                        num_samples = int(len(audio_chunk) * TARGET_SAMPLE_RATE / mic_rate)
+                        audio_chunk = resample(audio_chunk, num_samples).astype(np.int16)
+                    else:
+                        audio_chunk = audio_chunk.astype(np.int16, copy=False)
+
+                    # Encode and put in buffer
+                    base64_audio = base64.b64encode(audio_chunk.tobytes()).decode("utf-8")
+                    await conn.input_audio_buffer.append(audio=base64_audio)
+                    samples_to_commit += len(audio_chunk)
+
+                    # Commit
+                    if samples_to_commit >= 0.5 * TARGET_SAMPLE_RATE:
+                        await conn.input_audio_buffer.commit()
+                        samples_to_commit = 0
+
             except Exception as e:
                 logger.error(f"Error sending audio: {e}")
 
