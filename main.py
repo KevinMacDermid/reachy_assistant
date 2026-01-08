@@ -96,14 +96,16 @@ async def transcribe_audio():
                         audio_chunk = audio_chunk.astype(np.int16, copy=False)
 
                     # Encode and put in buffer
+                    if not np.all(audio_chunk == 0):
+                        print("got sample with some data in it")
                     base64_audio = base64.b64encode(audio_chunk.tobytes()).decode("utf-8")
-                    await conn.input_audio_buffer.append(audio=base64_audio)
-                    samples_to_commit += len(audio_chunk)
+                    event = await conn.input_audio_buffer.append(audio=base64_audio)
 
-                    # Commit
-                    if samples_to_commit >= 0.5 * TARGET_SAMPLE_RATE:
-                        await conn.input_audio_buffer.commit()
-                        samples_to_commit = 0
+                    # Commit (shouldn't do given that we have ServerVad
+                    #samples_to_commit += audio_chunk.size
+                    #if samples_to_commit >= 0.5 * TARGET_SAMPLE_RATE:
+                    #    await conn.input_audio_buffer.commit()
+                    #    samples_to_commit = 0
 
             except Exception as e:
                 logger.error(f"Error sending audio: {e}")
