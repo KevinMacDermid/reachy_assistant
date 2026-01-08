@@ -37,8 +37,8 @@ def main():
     reachy = ReachyMini()
     reachy.goto_sleep()
     # ToDo: should force this to use the robot's audio channel
-    #listen_for_wakeword()
-    #print("Wakeword Received!")
+    listen_for_wakeword()
+    print("Wakeword Received!")
     reachy.wake_up()
     audio_frame = reachy.media.get_audio_sample()
 
@@ -137,6 +137,6 @@ async def transcribe_audio():
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
-    #main()
-    asyncio.run(transcribe_audio())
+    main()
+    #asyncio.run(transcribe_audio())
 

@@ -43,3 +43,14 @@ https://huggingface.co/spaces/luisomoreau/hey_reachy_wake_word_detection
 # Conversation
 Looks like they have conversation with face tracking already
 https://huggingface.co/spaces/pollen-robotics/reachy_mini_conversation_app/tree/main/src/reachy_mini_conversation_app
+
+
+# Issues
+
+## Audio Troubles
+Sometimes have trouble getting audio from the robot, not sure the problem yet,
+but saw that if an error is raised by the daemon it can be because the audio device
+is already claimed, you can check using
+```bash
+arecord -l
+```
