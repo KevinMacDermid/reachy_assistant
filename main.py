@@ -62,12 +62,14 @@ async def transcribe_audio():
             model="gpt-4o-transcribe",
             audio=RealtimeAudioConfigParam(
                 input=RealtimeAudioConfigInputParam(
-                    format=AudioPCM(),
+                    format=AudioPCM(
+                        type = "audio/pcm",
+                        rate = 24000
+                    ),
                     transcription=AudioTranscriptionParam(model="gpt-4o-transcribe"),
                     turn_detection=SemanticVad(type="semantic_vad")   # This has higher latency but should only respond when it makes sense
 
                 ),
-                output=None,  # No TTS output; remove or expand if you eventually want audio back
             ),
         )
         await conn.session.update(session=session_config)
@@ -94,6 +96,7 @@ async def transcribe_audio():
         async def receive_events():
             """Listen for transcription events."""
             async for event in conn:
+                print(event)
                 # Partial transcription (real-time)
                 if event.type == "conversation.item.input_audio_transcription.partial":
                     print(f"Partial: {event.transcript}", end="\r")
