@@ -18,6 +18,7 @@ from scipy.signal import resample
 from openwakeword.model import Model
 import pyaudio
 import logging
+import time
 
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,10 @@ def listen_for_wakeword(reachy) -> bool:
     """
     mic_rate = reachy.media.get_input_audio_samplerate()
     reachy.media.start_recording()
+    target_window_s = 0.5
+    target_samples = int(mic_rate * target_window_s)
+    buffered_audio = np.empty(0, dtype=np.int16)
+    pred = 0
 
     while True:
         # Get audio
@@ -55,14 +60,14 @@ def listen_for_wakeword(reachy) -> bool:
         if audio_chunk.ndim == 2:
             audio_chunk = audio_chunk[:, 0]
 
-        if not np.all(audio_chunk == 0):
-            print("Non zero samples received")
-
         audio_chunk = audio_chunk.astype(np.int16, copy=False)
-
-        # Feed to openWakeWord model
-        # Only using a single model here, it supports having multiple
-        pred = WAKE_MODEL.predict(audio_chunk)[WAKE_MODEL_NAME]
+        buffered_audio = np.concatenate((buffered_audio, audio_chunk))
+        if buffered_audio.size > target_samples:
+            if not np.all(buffered_audio == 0):
+                print("Non zero samples received")
+            # Feed to openWakeWord model
+            pred = WAKE_MODEL.predict(buffered_audio)[WAKE_MODEL_NAME]
+            buffered_audio = np.empty(0, dtype=np.int16)
 
         if pred >= THRESHOLD:
             break
@@ -180,4 +185,12 @@ if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
     main()
     #asyncio.run(transcribe_audio())
+    #while True:
+    #    robot = ReachyMini()
+    #    robot.start_recording()
+    #    chunk = robot.media.get_audio_sample()
+    #    if chunk is not None and not np.all(chunk == 0.0):
+    #        print("Got a sample")
+
+    #    time.sleep(0.5)
 
