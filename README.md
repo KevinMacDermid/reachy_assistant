@@ -54,3 +54,24 @@ is already claimed, you can check using
 ```bash
 arecord -l
 ```
+### Issue 1: Failed Conversation App
+Tested on Megabyte using conversation app, it also doesn't get or play audio from the robot
+- Startup sound does play, sometimes had to adjust volume for it to work
+- Unplug and replug USB, now the microphone looks good in settings, and conversation app works.
+- **Do not leave the sound window open, Pipewire will hog the device**. Can tell if this happens as there will be
+a warning
+
+Once this is fixed the converation app is working fine.
+
+### Issue 2: Failed Audio Sample
+When I collect samples using robot.media.get_audio_sample(), I get samples, but they're all 0.0
+Evidence:
+ - Checked the mic on Pipewire, it's also reading no input.
+ - Tried conversation app, it's also no longer getting input
+
+Next Steps:
+ - Check after reboot - Fixed
+ - Check with MacOS - was working.
+
+**I think the robot can get in a state where the audio isn't working, not clear if that's
+triggered by software, or maybe the USB hub.**
