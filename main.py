@@ -28,8 +28,8 @@ DANCE_MOVES = RecordedMoves("pollen-robotics/reachy-mini-dances-library")
 TARGET_SAMPLE_RATE = 24000
 _ = load_dotenv()
 
-#WAKE_MODEL_NAME = "hey_jarvis_v0.1"
-WAKE_MODEL_NAME = "hey_luna"
+WAKE_MODEL_NAME = "hey_jarvis_v0.1"
+#WAKE_MODEL_NAME = "hey_luna"
 WAKE_MODEL = Model(
    wakeword_model_paths=[os.path.join(os.path.dirname(__file__), "models", f"{WAKE_MODEL_NAME}.onnx")]
 )
@@ -42,9 +42,10 @@ def listen_for_wakeword(reachy) -> bool:
     """
     mic_rate = reachy.media.get_input_audio_samplerate()
     reachy.media.start_recording()
-    window_s = 0.5
-    frames = int(window_s * mic_rate)
-    prev_chunk = np.zeros(frames, dtype=np.int16)
+
+    frames = 1280 * 10  # OpenWakeWord wants multiples of 1280 samples
+    delay_s = frames / mic_rate
+    time.sleep(delay_s)
 
     while True:
         # Get audio
@@ -62,17 +63,17 @@ def listen_for_wakeword(reachy) -> bool:
             chunk = np.clip(chunk, -1.0, 1.0)
             chunk = (chunk * np.iinfo(np.int16).max).astype(np.int16, copy=False)
 
-        to_pred = np.concatenate((prev_chunk, chunk))
-        if np.all(to_pred == 0):
+        if np.all(chunk == 0):
             logger.warning("All audio samples are zero going to wake word model!")
-        pred = WAKE_MODEL.predict(to_pred)[WAKE_MODEL_NAME]
-        prev_chunk = chunk
+
+        # OpenWakeWord model has buffer internally, so just send latest chunk
+        pred = WAKE_MODEL.predict(chunk)[WAKE_MODEL_NAME]
 
         print(pred)
         if pred >= WAKE_THRESHOLD:
             break
 
-        time.sleep(window_s)
+        time.sleep(delay_s)
 
     return True
 
@@ -81,13 +82,15 @@ def main():
     """
     Main conversation App
     """
-    # Tried starting the daemon here, but it wouldn't work, start it separately
-    with ReachyMini() as reachy:
-        reachy.goto_sleep()
-        # ToDo: should force this to use the robot's audio channel
-        listen_for_wakeword(reachy)
-        print("Wakeword Received!")
-        reachy.wake_up()
+    while True:
+        # Tried starting the daemon here, but it wouldn't work, start it separately
+        with ReachyMini() as reachy:
+            reachy.goto_sleep()
+            # ToDo: should force this to use the robot's audio channel
+            listen_for_wakeword(reachy)
+            print("Wakeword Received!")
+            reachy.wake_up()
+            time.sleep(0.5)
 
 
 async def transcribe_audio():
