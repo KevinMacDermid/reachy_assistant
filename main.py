@@ -1,4 +1,4 @@
-from reachy_mini.motion.recorded_move import RecordedMove, RecordedMoves
+from reachy_mini.motion.recorded_move import RecordedMoves
 from dotenv import load_dotenv
 import asyncio
 import base64
@@ -16,8 +16,6 @@ from openai.types.realtime.realtime_audio_input_turn_detection_param import Sema
 from reachy_mini import ReachyMini
 from scipy.signal import resample
 from openwakeword.model import Model
-from collections import deque
-import pyaudio
 import logging
 import time
 
@@ -28,8 +26,8 @@ DANCE_MOVES = RecordedMoves("pollen-robotics/reachy-mini-dances-library")
 TARGET_SAMPLE_RATE = 24000
 _ = load_dotenv()
 
-WAKE_MODEL_NAME = "hey_jarvis_v0.1"
-#WAKE_MODEL_NAME = "hey_luna"
+#WAKE_MODEL_NAME = "hey_jarvis_v0.1"
+WAKE_MODEL_NAME = "hey_marvin"
 WAKE_MODEL = Model(
    wakeword_model_paths=[os.path.join(os.path.dirname(__file__), "models", f"{WAKE_MODEL_NAME}.onnx")]
 )
@@ -42,6 +40,7 @@ def listen_for_wakeword(reachy) -> bool:
     """
     mic_rate = reachy.media.get_input_audio_samplerate()
     reachy.media.start_recording()
+    _ = reachy.media.get_audio_sample()   # sometimes it seems to still have the previous
 
     frames = 1280 * 10  # OpenWakeWord wants multiples of 1280 samples
     delay_s = frames / mic_rate
@@ -71,10 +70,12 @@ def listen_for_wakeword(reachy) -> bool:
 
         print(pred)
         if pred >= WAKE_THRESHOLD:
+            WAKE_MODEL.reset()  # reset the wake model's internal buffer
             break
 
         time.sleep(delay_s)
 
+    reachy.media.stop_recording()
     return True
 
 
