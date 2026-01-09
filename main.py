@@ -44,7 +44,7 @@ def listen_for_wakeword(reachy) -> bool:
     reachy.media.start_recording()
     target_window_s = 0.5
     target_samples = int(mic_rate * target_window_s)
-    buffered_audio = np.empty(0, dtype=np.int16)
+    buffer = deque(maxlen=target_samples * 5)
     pred = 0
 
     while True:
@@ -74,7 +74,7 @@ def listen_for_wakeword(reachy) -> bool:
 
         if pred >= WAKE_THRESHOLD:
             break
-        time.sleep(target_window_s)
+        #time.sleep(target_window_s)
 
     return True
 
