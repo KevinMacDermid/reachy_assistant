@@ -29,15 +29,18 @@ _ = load_dotenv()
 #WAKE_MODEL_NAME = "hey_jarvis_v0.1"
 WAKE_MODEL_NAME = "hey_marvin"
 WAKE_MODEL = Model(
-   wakeword_model_paths=[os.path.join(os.path.dirname(__file__), "models", f"{WAKE_MODEL_NAME}.onnx")]
-)
+        wakeword_model_paths=[os.path.join(os.path.dirname(__file__), "models", f"{WAKE_MODEL_NAME}.onnx")]
+    )
 WAKE_THRESHOLD=0.5
 
 
-def listen_for_wakeword(reachy) -> bool:
+def listen_for_wakeword(reachy) -> float:
     """
     Blocks until the wakeword is received.
+    Returns:
+        direction_of_arrival: The direction the sound came from
     """
+
     mic_rate = reachy.media.get_input_audio_samplerate()
     reachy.media.start_recording()
     _ = reachy.media.get_audio_sample()   # sometimes it seems to still have the previous
@@ -45,12 +48,16 @@ def listen_for_wakeword(reachy) -> bool:
     frames = 1280 * 5  # OpenWakeWord wants multiples of 1280 samples
     delay_s = frames / mic_rate
     time.sleep(delay_s)
+    doa = 0
 
+    logger.info(f"Starting wakeword listening using model {WAKE_MODEL_NAME}")
     while True:
         # Get audio
         chunk = reachy.media.get_audio_sample()
         if chunk is None:
             continue
+
+        doa = reachy.media.get_DoA()[0]
 
         # Take single channel
         if chunk.ndim == 2:
@@ -68,15 +75,16 @@ def listen_for_wakeword(reachy) -> bool:
         # OpenWakeWord model has buffer internally, so just send latest chunk
         pred = WAKE_MODEL.predict(chunk)[WAKE_MODEL_NAME]
 
-        print(pred)
+        logger.debug(f"Wake prediction = {pred}")
         if pred >= WAKE_THRESHOLD:
+            logger.info(f"Wake word detected with DoA {doa}")
             WAKE_MODEL.reset()  # reset the wake model's internal buffer
             break
 
         time.sleep(delay_s)
 
     reachy.media.stop_recording()
-    return True
+    return doa
 
 
 def main():
@@ -88,9 +96,10 @@ def main():
         with ReachyMini() as reachy:
             reachy.goto_sleep()
             # ToDo: should force this to use the robot's audio channel
-            listen_for_wakeword(reachy)
+            doa = listen_for_wakeword(reachy)
             print("Wakeword Received!")
             reachy.wake_up()
+            reachy.set_target_body_yaw(-1 * doa)
             time.sleep(0.5)
 
 
@@ -187,7 +196,7 @@ async def transcribe_audio():
 
 
 if __name__ == '__main__':
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=logging.DEBUG)
     main()
     #asyncio.run(transcribe_audio())
     #while True:

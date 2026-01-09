@@ -69,11 +69,19 @@ Evidence:
  - Checked the mic on Pipewire, it's also reading no input.
  - Tried conversation app, it's also no longer getting input
 
-Next Steps:
- - Check after reboot - Fixed
- - Check with MacOS - was working.
-
 **I think the robot can get in a state where the audio isn't working, not clear if that's
 triggered by software, or maybe the USB hub.**
 
 **Can happen from software, unplug it and plug it back in seems to fix it**
+
+## Direction of Arrival Issue
+Had problem with USB permissions, had to update /etc/udev/rules.d/99-reachy-mini.rules to
+```
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d3", MODE="0666", GROUP="dialout"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="38fb", ATTRS{idProduct}=="1001", MODE="0666", GROUP="dialout"
+# Target the raw USB hardware (usb) - This fixes the USBError Errno 13
+SUBSYSTEM=="usb", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d3", MODE="0666", GROUP="dialout"
+# Do the same for the Audio/Camera if they are causing issues
+SUBSYSTEM=="usb", ATTRS{idVendor}=="38fb", MODE="0666", GROUP="dialout"
+```
+The last line was the one that seemed to fix it.
