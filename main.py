@@ -16,6 +16,7 @@ from openai.types.realtime.realtime_audio_input_turn_detection_param import Sema
 from reachy_mini import ReachyMini
 from scipy.signal import resample
 from openwakeword.model import Model
+from collections import deque
 import pyaudio
 import logging
 import time
@@ -27,16 +28,12 @@ DANCE_MOVES = RecordedMoves("pollen-robotics/reachy-mini-dances-library")
 TARGET_SAMPLE_RATE = 24000
 _ = load_dotenv()
 
-FORMAT = pyaudio.paInt16
-CHANNELS = 1
-RATE = 16000
-CHUNK = 1280
 #WAKE_MODEL_NAME = "hey_jarvis_v0.1"
 WAKE_MODEL_NAME = "hey_luna"
 WAKE_MODEL = Model(
    wakeword_model_paths=[os.path.join(os.path.dirname(__file__), "models", f"{WAKE_MODEL_NAME}.onnx")]
 )
-THRESHOLD=0.5
+WAKE_THRESHOLD=0.5
 
 
 def listen_for_wakeword(reachy) -> bool:
@@ -52,25 +49,32 @@ def listen_for_wakeword(reachy) -> bool:
 
     while True:
         # Get audio
-        audio_chunk = reachy.media.get_audio_sample()
-        if audio_chunk is None:
+        chunk = reachy.media.get_audio_sample()
+        if chunk is None:
             continue
 
         # Take single channel
-        if audio_chunk.ndim == 2:
-            audio_chunk = audio_chunk[:, 0]
+        if chunk.ndim == 2:
+            chunk = chunk[:, 0]
 
-        audio_chunk = audio_chunk.astype(np.int16, copy=False)
-        buffered_audio = np.concatenate((buffered_audio, audio_chunk))
-        if buffered_audio.size > target_samples:
-            if not np.all(buffered_audio == 0):
-                print("Non zero samples received")
+        # Scale to int16
+        if chunk.dtype != np.int16:
+            # Reachy’s audio is float32 in [-1, 1]; scale and clip before casting
+            chunk = np.clip(chunk, -1.0, 1.0)
+            chunk = (chunk * np.iinfo(np.int16).max).astype(np.int16, copy=False)
+
+        buffer.extend(chunk.tolist())
+        if len(buffer) >= target_samples:
+            to_pred = np.array(buffer, dtype=np.int16)
+            if np.all(to_pred == 0):
+                logger.warning("All audio samples are zero going to wake word model")
             # Feed to openWakeWord model
-            pred = WAKE_MODEL.predict(buffered_audio)[WAKE_MODEL_NAME]
-            buffered_audio = np.empty(0, dtype=np.int16)
+            pred = WAKE_MODEL.predict(to_pred)[WAKE_MODEL_NAME]
+            print(pred)
 
-        if pred >= THRESHOLD:
+        if pred >= WAKE_THRESHOLD:
             break
+        time.sleep(target_window_s)
 
     return True
 
@@ -80,13 +84,12 @@ def main():
     Main conversation App
     """
     # Tried starting the daemon here, but it wouldn't work, start it separately
-    reachy = ReachyMini()
-    reachy.goto_sleep()
-    # ToDo: should force this to use the robot's audio channel
-    listen_for_wakeword(reachy)
-    print("Wakeword Received!")
-    reachy.wake_up()
-    audio_frame = reachy.media.get_audio_sample()
+    with ReachyMini() as reachy:
+        reachy.goto_sleep()
+        # ToDo: should force this to use the robot's audio channel
+        listen_for_wakeword(reachy)
+        print("Wakeword Received!")
+        reachy.wake_up()
 
 
 async def transcribe_audio():
