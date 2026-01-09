@@ -42,10 +42,9 @@ def listen_for_wakeword(reachy) -> bool:
     """
     mic_rate = reachy.media.get_input_audio_samplerate()
     reachy.media.start_recording()
-    target_window_s = 0.5 # it's very sensitive to this
-    target_samples = int(mic_rate * target_window_s)
-    buffer = deque(maxlen=target_samples * 5)
-    pred = 0
+    window_s = 0.5
+    frames = int(window_s * mic_rate)
+    prev_chunk = np.zeros(frames, dtype=np.int16)
 
     while True:
         # Get audio
@@ -63,19 +62,17 @@ def listen_for_wakeword(reachy) -> bool:
             chunk = np.clip(chunk, -1.0, 1.0)
             chunk = (chunk * np.iinfo(np.int16).max).astype(np.int16, copy=False)
 
-        buffer.extend(chunk.tolist())
-        if len(buffer) >= target_samples:
-            to_pred = np.array(buffer, dtype=np.int16)
-            if np.all(to_pred == 0):
-                logger.warning("All audio samples are zero going to wake word model")
-            # Feed to openWakeWord model
-            pred = WAKE_MODEL.predict(to_pred)[WAKE_MODEL_NAME]
-            print(pred)
+        to_pred = np.concatenate((prev_chunk, chunk))
+        if np.all(to_pred == 0):
+            logger.warning("All audio samples are zero going to wake word model!")
+        pred = WAKE_MODEL.predict(to_pred)[WAKE_MODEL_NAME]
+        prev_chunk = chunk
 
+        print(pred)
         if pred >= WAKE_THRESHOLD:
             break
 
-        time.sleep(target_window_s)
+        time.sleep(window_s)
 
     return True
 

@@ -75,3 +75,5 @@ Next Steps:
 
 **I think the robot can get in a state where the audio isn't working, not clear if that's
 triggered by software, or maybe the USB hub.**
+
+**Can happen from software, unplug it and plug it back in seems to fix it**
