@@ -42,7 +42,7 @@ def listen_for_wakeword(reachy) -> bool:
     reachy.media.start_recording()
     _ = reachy.media.get_audio_sample()   # sometimes it seems to still have the previous
 
-    frames = 1280 * 10  # OpenWakeWord wants multiples of 1280 samples
+    frames = 1280 * 5  # OpenWakeWord wants multiples of 1280 samples
     delay_s = frames / mic_rate
     time.sleep(delay_s)
 
