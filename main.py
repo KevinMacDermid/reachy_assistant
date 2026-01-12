@@ -7,9 +7,9 @@ import numpy as np
 from openai import AsyncOpenAI
 from openai.types.realtime import (
     RealtimeSessionCreateRequestParam,
-     RealtimeAudioConfigParam,
+    RealtimeAudioConfigParam,
     RealtimeAudioConfigInputParam,
-    AudioTranscriptionParam
+    AudioTranscriptionParam, RealtimeToolsConfigParam, RealtimeFunctionToolParam
 )
 from openai.types.realtime.realtime_audio_formats_param import AudioPCM
 from openai.types.realtime.realtime_audio_input_turn_detection_param import SemanticVad, ServerVad
@@ -48,6 +48,8 @@ specific emotion move from the following list:
 
 Answer with just the name of the move that outlines the type of response you'd give, like
 if you were confused you might reply with "uncertain1"
+
+If you're dismissed, or asked to go to sleep, call the "end_conversation" tool.
 """
 
 
@@ -59,7 +61,6 @@ def listen_for_wakeword(reachy: ReachyMini) -> float:
     """
 
     mic_rate = reachy.media.get_input_audio_samplerate()
-    reachy.media.start_recording()
     _ = reachy.media.get_audio_sample()   # sometimes it seems to still have the previous
 
     frames = 1280 * 5  # OpenWakeWord wants multiples of 1280 samples
@@ -103,7 +104,7 @@ def listen_for_wakeword(reachy: ReachyMini) -> float:
 
     logger.info("Wakeword Received!")
     reachy.wake_up()
-    reachy.set_target_body_yaw(-1 * doa)
+    #reachy.set_target_body_yaw(-1 * doa)
     return doa
 
 
@@ -113,19 +114,43 @@ def main():
     """
     while True:
         # Tried starting the daemon here, but it wouldn't work, start it separately
-        with ReachyMini() as reachy:
-            #_= listen_for_wakeword(reachy)
+        with ReachyMini(automatic_body_yaw=True) as reachy:
+            reachy.media.start_recording()  # in case it's not already started
+            _ = listen_for_wakeword(reachy)
             try:
-                asyncio.run(transcribe_audio(reachy))
+                asyncio.run(main_conversation(reachy))
             except KeyboardInterrupt:
                 logger.info("Keyboard interrupt received, shutting down")
                 break
+            finally:
+                reachy.stop_recording()
 
 
-async def transcribe_audio(reachy: ReachyMini):
-    reachy.media.start_recording()  # in case it's not already started
+async def main_conversation(reachy: ReachyMini):
+    """
+    Main conversation coroutine, receives voice in real time and generates
+    either robot responses or voice output.
+
+    Args:
+        reachy: The robot instance
+    """
     mic_rate = reachy.media.get_input_audio_samplerate()
     client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
+    stop_event = asyncio.Event()
+
+    # ToDo: Load the mcp_server tools and convert to functions
+    tools = [
+        RealtimeFunctionToolParam(
+            name =  "end_conversation",
+            description =  "Ends the current conversation session when the user dismisses the assistant, or puts it to sleep",
+            parameters =  {
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                },
+            type="function"
+        )
+    ]
 
     logger.info("Connecting to OpenAI...")
     async with client.realtime.connect(model="gpt-4o-realtime-preview") as conn:
@@ -135,6 +160,8 @@ async def transcribe_audio(reachy: ReachyMini):
             output_modalities=["text"],
             model="gpt-4o-transcribe",
             instructions=BEBOOP_PROMPT,
+            tool_choice="auto",
+            tools=tools,
             audio=RealtimeAudioConfigParam(
                 input=RealtimeAudioConfigInputParam(
                     format=AudioPCM(
@@ -152,8 +179,7 @@ async def transcribe_audio(reachy: ReachyMini):
         async def send_audio():
             """Continuously poll mic and send to OpenAI."""
             try:
-                samples_to_commit = 0
-                while True:
+                while not stop_event.set():
                     chunk = reachy.media.get_audio_sample()
                     if chunk is None:
                         await asyncio.sleep(0.01)
@@ -179,7 +205,7 @@ async def transcribe_audio(reachy: ReachyMini):
                         print("Transcribe chunk is all zeroes")
 
                     base64_audio = base64.b64encode(chunk.tobytes()).decode("utf-8")
-                    event = await conn.input_audio_buffer.append(audio=base64_audio)
+                    await conn.input_audio_buffer.append(audio=base64_audio)
 
             except Exception as e:
                 logger.error(f"Error sending audio: {e}")
@@ -204,7 +230,18 @@ async def transcribe_audio(reachy: ReachyMini):
                         logger.error("Move {event.text} was not in the emotion moves list")
                         await reachy.play_move(EMOTION_MOVES.get("confused1"))
 
-        logger.info("Listening... (Ctrl+C to stop)")
+                elif event.type == "response.done":
+                    output = event.response.output[0]
+                    if output.type == "function_call":
+                        tool_name = output.name
+                        if tool_name == "end_conversation":
+                            logger.info("Tool call: end_conversation → stopping conversation loop.")
+                            stop_event.set()  # or cancel tasks / break out as appropriate
+                            raise asyncio.CancelledError()
+                        else:
+                            logger.error(f"Unrecognized tool receieved. Name = {tool_name}")
+
+        logger.info("Conversation Started... (Ctrl+C to stop)")
         try:
             # Run both loops concurrently
             await asyncio.gather(send_audio(), receive_events())
