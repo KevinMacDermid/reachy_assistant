@@ -1,4 +1,4 @@
-from reachy_mini.motion.recorded_move import RecordedMoves
+from reachy_mini.motion.recorded_move import RecordedMoves, RecordedMove
 from dotenv import load_dotenv
 import asyncio
 import base64
@@ -21,7 +21,6 @@ import time
 
 
 logger = logging.getLogger(__name__)
-EMOTION_MOVES = RecordedMoves("pollen-robotics/reachy-mini-emotions-library")
 DANCE_MOVES = RecordedMoves("pollen-robotics/reachy-mini-dances-library")
 TARGET_SAMPLE_RATE = 24000
 _ = load_dotenv()
@@ -31,6 +30,25 @@ WAKE_MODEL = Model(
         wakeword_model_paths=[os.path.join(os.path.dirname(__file__), "models", f"{WAKE_MODEL_NAME}.onnx")]
     )
 WAKE_THRESHOLD=0.5
+
+BEBOOP_MOVE_NAMES = [
+    "yes1",
+    "laughing1",
+    "understanding1",
+
+
+
+]
+EMOTION_MOVES = RecordedMoves("pollen-robotics/reachy-mini-emotions-library")
+BEBOOP_PROMPT = f"""
+You are a helpful little robot with just a head, no arms and legs. You're actually a 
+reachy-mini robot from HuggingFace with the name Marvin. You can only respond with 
+specific emotion move from the following list:
+ {str({name: EMOTION_MOVES.get(name).description for name in EMOTION_MOVES.list_moves()})}
+
+Answer with just the name of the move that outlines the type of response you'd give, like
+if you were confused you might reply with "uncertain1"
+"""
 
 
 def listen_for_wakeword(reachy: ReachyMini) -> float:
@@ -83,7 +101,7 @@ def listen_for_wakeword(reachy: ReachyMini) -> float:
 
         time.sleep(delay_s)
 
-    print("Wakeword Received!")
+    logger.info("Wakeword Received!")
     reachy.wake_up()
     reachy.set_target_body_yaw(-1 * doa)
     return doa
@@ -104,9 +122,9 @@ def main():
                 break
 
 
-async def transcribe_audio(robot: ReachyMini):
-    robot.media.start_recording()  # in case it's not already started
-    mic_rate = robot.media.get_input_audio_samplerate()
+async def transcribe_audio(reachy: ReachyMini):
+    reachy.media.start_recording()  # in case it's not already started
+    mic_rate = reachy.media.get_input_audio_samplerate()
     client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
     logger.info("Connecting to OpenAI...")
@@ -116,6 +134,7 @@ async def transcribe_audio(robot: ReachyMini):
             type="realtime",
             output_modalities=["text"],
             model="gpt-4o-transcribe",
+            instructions=BEBOOP_PROMPT,
             audio=RealtimeAudioConfigParam(
                 input=RealtimeAudioConfigInputParam(
                     format=AudioPCM(
@@ -135,7 +154,7 @@ async def transcribe_audio(robot: ReachyMini):
             try:
                 samples_to_commit = 0
                 while True:
-                    chunk = robot.media.get_audio_sample()
+                    chunk = reachy.media.get_audio_sample()
                     if chunk is None:
                         await asyncio.sleep(0.01)
                         continue
@@ -172,10 +191,18 @@ async def transcribe_audio(robot: ReachyMini):
                     logger.debug(f"Partial: {event.transcript}")
 
                 elif event.type == "conversation.item.input_audio_transcription.completed":
-                    logger.info(f"\nFinal: {event.transcript}")
+                    logger.info(f"\nUser: {event.transcript}")
 
                 elif event.type == "error":
                     logger.error(f"\nError: {str(event.error)}")
+
+                elif event.type == "response.output_text.done":
+                    logger.info(f"Model: {event.text}")
+                    try:
+                        await reachy.async_play_move(EMOTION_MOVES.get(event.text))
+                    except ValueError:
+                        logger.error("Move {event.text} was not in the emotion moves list")
+                        await reachy.play_move(EMOTION_MOVES.get("confused1"))
 
         logger.info("Listening... (Ctrl+C to stop)")
         try:
@@ -184,7 +211,7 @@ async def transcribe_audio(robot: ReachyMini):
         except asyncio.CancelledError:
             pass
         finally:
-            robot.media.stop_recording()
+            reachy.media.stop_recording()
 
 
 if __name__ == '__main__':

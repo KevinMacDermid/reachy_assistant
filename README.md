@@ -3,12 +3,14 @@ This is a small project to explore the Reachy Mini robot.
 
 To Do:
  - Add OpenAI realtime voice handling - https://platform.openai.com/docs/guides/voice-agents?voice-agent-architecture=chained
- - Emotions (Should be able to access the SDK emotions library)
- - Light Control (MCP Lighting Server)
+   - Basic Transcript
+   - Responses emotions only
+- Light Control (MCP Lighting Server)
  - Trigger Voice Conversation 
 
 Other Ideas:
- - Face tracking + scan (look at you)
+ - Look based on direction of arrival
+ - Face tracking + scan (look at you) (run in separate process)
  - Link / embed some of the existing apps (20 questions, hand tracking)
 
 # Installation
