@@ -2,9 +2,7 @@
 This is a small project to explore the Reachy Mini robot.
 
 To Do:
- - Add OpenAI realtime voice handling - https://platform.openai.com/docs/guides/voice-agents?voice-agent-architecture=chained
-   - Basic Transcript
-   - Responses emotions only
+- Improve latency for stopping conversation
 - Light Control (MCP Lighting Server)
  - Trigger Voice Conversation 
 
@@ -45,6 +43,8 @@ https://huggingface.co/spaces/luisomoreau/hey_reachy_wake_word_detection
 # Conversation
 Looks like they have conversation with face tracking already
 https://huggingface.co/spaces/pollen-robotics/reachy_mini_conversation_app/tree/main/src/reachy_mini_conversation_app
+
+https://platform.openai.com/docs/guides/voice-agents?voice-agent-architecture=chained
 
 
 # Issues
