@@ -26,7 +26,6 @@ DANCE_MOVES = RecordedMoves("pollen-robotics/reachy-mini-dances-library")
 TARGET_SAMPLE_RATE = 24000
 _ = load_dotenv()
 
-#WAKE_MODEL_NAME = "hey_jarvis_v0.1"
 WAKE_MODEL_NAME = "hey_marvin"
 WAKE_MODEL = Model(
         wakeword_model_paths=[os.path.join(os.path.dirname(__file__), "models", f"{WAKE_MODEL_NAME}.onnx")]
@@ -34,7 +33,7 @@ WAKE_MODEL = Model(
 WAKE_THRESHOLD=0.5
 
 
-def listen_for_wakeword(reachy) -> float:
+def listen_for_wakeword(reachy: ReachyMini) -> float:
     """
     Blocks until the wakeword is received.
     Returns:
@@ -51,6 +50,7 @@ def listen_for_wakeword(reachy) -> float:
     doa = 0
 
     logger.info(f"Starting wakeword listening using model {WAKE_MODEL_NAME}")
+    reachy.goto_sleep()
     while True:
         # Get audio
         chunk = reachy.media.get_audio_sample()
@@ -83,7 +83,9 @@ def listen_for_wakeword(reachy) -> float:
 
         time.sleep(delay_s)
 
-    reachy.media.stop_recording()
+    print("Wakeword Received!")
+    reachy.wake_up()
+    reachy.set_target_body_yaw(-1 * doa)
     return doa
 
 
@@ -94,28 +96,22 @@ def main():
     while True:
         # Tried starting the daemon here, but it wouldn't work, start it separately
         with ReachyMini() as reachy:
-            reachy.goto_sleep()
-            # ToDo: should force this to use the robot's audio channel
-            doa = listen_for_wakeword(reachy)
-            print("Wakeword Received!")
-            reachy.wake_up()
-            reachy.set_target_body_yaw(-1 * doa)
-            time.sleep(0.5)
+            #_= listen_for_wakeword(reachy)
+            try:
+                asyncio.run(transcribe_audio(reachy))
+            except KeyboardInterrupt:
+                logger.info("Keyboard interrupt received, shutting down")
+                break
 
 
-async def transcribe_audio():
-    # 1. Initialize Robot
-    robot = ReachyMini()
-    robot.media.start_recording()
+async def transcribe_audio(robot: ReachyMini):
+    robot.media.start_recording()  # in case it's not already started
     mic_rate = robot.media.get_input_audio_samplerate()
-
-    # 2. Initialize OpenAI Client
     client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
     logger.info("Connecting to OpenAI...")
     async with client.realtime.connect(model="gpt-4o-realtime-preview") as conn:
-        # Configure session for transcription
-
+        # Configure session for realtime conversation
         session_config = RealtimeSessionCreateRequestParam(
             type="realtime",
             output_modalities=["text"],
@@ -139,33 +135,32 @@ async def transcribe_audio():
             try:
                 samples_to_commit = 0
                 while True:
-                    audio_chunk = robot.media.get_audio_sample()
-                    if audio_chunk is None:
+                    chunk = robot.media.get_audio_sample()
+                    if chunk is None:
                         await asyncio.sleep(0.01)
                         continue
 
                     # Take single channel
-                    if audio_chunk.ndim == 2:
-                        audio_chunk = audio_chunk[:, 0]
+                    if chunk.ndim == 2:
+                        chunk = chunk[:, 0]
 
                     # Resample to 24kHz if necessary
                     if mic_rate != TARGET_SAMPLE_RATE:
-                        num_samples = int(len(audio_chunk) * TARGET_SAMPLE_RATE / mic_rate)
-                        audio_chunk = resample(audio_chunk, num_samples).astype(np.int16)
-                    else:
-                        audio_chunk = audio_chunk.astype(np.int16, copy=False)
+                        num_samples = int(len(chunk) * TARGET_SAMPLE_RATE / mic_rate)
+                        chunk = resample(chunk, num_samples)
+
+                    # Scale to int16
+                    if chunk.dtype != np.int16:
+                        # Reachy’s audio is float32 in [-1, 1]; scale and clip before casting
+                        chunk = np.clip(chunk, -1.0, 1.0)
+                        chunk = (chunk * np.iinfo(np.int16).max).astype(np.int16, copy=False)
 
                     # Encode and put in buffer
-                    if not np.all(audio_chunk == 0):
-                        print("got sample with some data in it")
-                    base64_audio = base64.b64encode(audio_chunk.tobytes()).decode("utf-8")
-                    event = await conn.input_audio_buffer.append(audio=base64_audio)
+                    if np.all(chunk == 0):
+                        print("Transcribe chunk is all zeroes")
 
-                    # Commit (shouldn't do given that we have ServerVad
-                    #samples_to_commit += audio_chunk.size
-                    #if samples_to_commit >= 0.5 * TARGET_SAMPLE_RATE:
-                    #    await conn.input_audio_buffer.commit()
-                    #    samples_to_commit = 0
+                    base64_audio = base64.b64encode(chunk.tobytes()).decode("utf-8")
+                    event = await conn.input_audio_buffer.append(audio=base64_audio)
 
             except Exception as e:
                 logger.error(f"Error sending audio: {e}")
@@ -173,17 +168,14 @@ async def transcribe_audio():
         async def receive_events():
             """Listen for transcription events."""
             async for event in conn:
-                print(event)
-                # Partial transcription (real-time)
                 if event.type == "conversation.item.input_audio_transcription.partial":
-                    print(f"Partial: {event.transcript}", end="\r")
+                    logger.debug(f"Partial: {event.transcript}")
 
-                # Final transcription
                 elif event.type == "conversation.item.input_audio_transcription.completed":
-                    print(f"\nFinal: {event.transcript}")
+                    logger.info(f"\nFinal: {event.transcript}")
 
                 elif event.type == "error":
-                    print(f"\nError: {str(event.error)}")
+                    logger.error(f"\nError: {str(event.error)}")
 
         logger.info("Listening... (Ctrl+C to stop)")
         try:
@@ -196,15 +188,6 @@ async def transcribe_audio():
 
 
 if __name__ == '__main__':
-    logging.basicConfig(level=logging.DEBUG)
+    logging.basicConfig(level=logging.INFO)
     main()
-    #asyncio.run(transcribe_audio())
-    #while True:
-    #    robot = ReachyMini()
-    #    robot.start_recording()
-    #    chunk = robot.media.get_audio_sample()
-    #    if chunk is not None and not np.all(chunk == 0.0):
-    #        print("Got a sample")
-
-    #    time.sleep(0.5)
 
