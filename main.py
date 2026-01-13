@@ -95,7 +95,7 @@ def listen_for_wakeword(reachy: ReachyMini) -> float:
         if chunk is None:
             continue
 
-        doa = reachy.media.get_DoA()[0]
+        #doa = reachy.media.get_DoA()[0]
 
         # Take single channel
         if chunk.ndim == 2:

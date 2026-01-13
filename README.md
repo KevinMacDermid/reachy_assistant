@@ -2,8 +2,6 @@
 This is a small project to explore the Reachy Mini robot.
 
 To Do:
-- Improve latency for stopping conversation
-- Light Control (MCP Lighting Server)
  - Trigger Voice Conversation 
 
 Other Ideas:
