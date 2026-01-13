@@ -133,10 +133,10 @@ def main():
     client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
     # Tried starting the daemon here, but it wouldn't work, start it separately
     with ReachyMini(automatic_body_yaw=True) as reachy:
+        reachy.goto_sleep()
         while True:
             reachy.media.start_recording()
             try:
-                reachy.goto_sleep()
                 _ = listen_for_wakeword(reachy)
                 reachy.wake_up()
                 # Main conversation
@@ -178,7 +178,9 @@ async def main_conversation(
                         type = "audio/pcm",
                         rate = 24000
                     ),
-                    transcription=AudioTranscriptionParam(model="gpt-4o-transcribe"),
+                    transcription=AudioTranscriptionParam(
+                        model="gpt-4o-transcribe",
+                        language="en"),
                     turn_detection=ServerVad(type="server_vad")
 
                 ),
@@ -247,6 +249,7 @@ async def main_conversation(
                             tool_name = output.name
                             if tool_name == "end_conversation":
                                 logger.info("Tool call: end_conversation → stopping conversation loop.")
+                                reachy.goto_sleep()
                                 stop_event.set()  # or cancel tasks / break out as appropriate
                                 raise asyncio.CancelledError()
                             elif tool_name == "set_light_state":
