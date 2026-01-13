@@ -10,5 +10,6 @@ dependencies = [
     "mcp>=1.25.0",
     "scipy-stubs~=1.16.3",
     "python-dotenv",
-    "openai"
+    "openai",
+    "flux_led==1.2.0"
 ]
