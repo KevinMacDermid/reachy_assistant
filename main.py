@@ -1,4 +1,6 @@
-from reachy_mini.motion.recorded_move import RecordedMoves, RecordedMove
+import json
+
+from reachy_mini.motion.recorded_move import RecordedMoves
 from dotenv import load_dotenv
 import asyncio
 import base64
@@ -9,7 +11,9 @@ from openai.types.realtime import (
     RealtimeSessionCreateRequestParam,
     RealtimeAudioConfigParam,
     RealtimeAudioConfigInputParam,
-    AudioTranscriptionParam, RealtimeToolsConfigParam, RealtimeFunctionToolParam
+    AudioTranscriptionParam,
+    RealtimeToolsConfigParam,
+    RealtimeFunctionToolParam
 )
 from openai.types.realtime.realtime_audio_formats_param import AudioPCM
 from openai.types.realtime.realtime_audio_input_turn_detection_param import SemanticVad, ServerVad
@@ -18,19 +22,21 @@ from scipy.signal import resample
 from openwakeword.model import Model
 import logging
 import time
+from src.mcp_light_server import LIGHTS_MCP, LightState, set_light_state
 
-
-logger = logging.getLogger(__name__)
-DANCE_MOVES = RecordedMoves("pollen-robotics/reachy-mini-dances-library")
-TARGET_SAMPLE_RATE = 24000
 _ = load_dotenv()
+logger = logging.getLogger(__name__)
 
+# Wake model
+TARGET_SAMPLE_RATE = 24000
 WAKE_MODEL_NAME = "hey_marvin"
 WAKE_MODEL = Model(
         wakeword_model_paths=[os.path.join(os.path.dirname(__file__), "models", f"{WAKE_MODEL_NAME}.onnx")]
     )
 WAKE_THRESHOLD=0.5
 
+# Silent Robot
+#DANCE_MOVES = RecordedMoves("pollen-robotics/reachy-mini-dances-library")
 EMOTION_MOVES = RecordedMoves("pollen-robotics/reachy-mini-emotions-library")
 BEBOOP_PROMPT = f"""
 You are a helpful little robot with just a head, no arms and legs. You're actually a 
@@ -43,6 +49,31 @@ if you were confused you might reply with "uncertain1".
 
 If you're dismissed, or asked to go to sleep, call the "end_conversation" tool.
 """
+
+# Lighting Tools
+
+TOOLS = []
+for tool in asyncio.run(LIGHTS_MCP.list_tools()):
+    TOOLS.append(
+        RealtimeFunctionToolParam(
+            name=tool.name,
+            description=tool.description,
+            parameters=tool.inputSchema,
+            type="function",
+        )
+    )
+TOOLS.append(
+    RealtimeFunctionToolParam(
+        name="end_conversation",
+        description="Ends the current conversation session when the user dismisses the assistant, or puts it to sleep",
+        parameters={
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+        type="function"
+    )
+)
 
 
 def listen_for_wakeword(reachy: ReachyMini) -> float:
@@ -131,20 +162,6 @@ async def main_conversation(
     mic_rate = reachy.media.get_input_audio_samplerate()
     stop_event = asyncio.Event()
 
-    # ToDo: Load the mcp_server tools and convert to functions
-    tools = [
-        RealtimeFunctionToolParam(
-            name =  "end_conversation",
-            description =  "Ends the current conversation session when the user dismisses the assistant, or puts it to sleep",
-            parameters =  {
-                    "type": "object",
-                    "properties": {},
-                    "required": [],
-                },
-            type="function"
-        )
-    ]
-
     logger.info("Connecting to OpenAI...")
     async with client.realtime.connect(model="gpt-4o-realtime-preview") as conn:
         # Configure session for realtime conversation
@@ -154,7 +171,7 @@ async def main_conversation(
             model="gpt-4o-transcribe",
             instructions=BEBOOP_PROMPT,
             tool_choice="auto",
-            tools=tools,
+            tools=TOOLS,
             audio=RealtimeAudioConfigParam(
                 input=RealtimeAudioConfigInputParam(
                     format=AudioPCM(
@@ -221,7 +238,7 @@ async def main_conversation(
                         await reachy.async_play_move(EMOTION_MOVES.get(event.text))
                     except ValueError:
                         logger.error("Move {event.text} was not in the emotion moves list")
-                        await reachy.play_move(EMOTION_MOVES.get("confused1"))
+                        await reachy.async_play_move(EMOTION_MOVES.get("confused1"))
 
                 elif event.type == "response.done":
                     if len(event.response.output) > 0:
@@ -232,6 +249,19 @@ async def main_conversation(
                                 logger.info("Tool call: end_conversation → stopping conversation loop.")
                                 stop_event.set()  # or cancel tasks / break out as appropriate
                                 raise asyncio.CancelledError()
+                            elif tool_name == "set_light_state":
+                                # Currently just calling the light directly, may remove MCP
+                                logger.info("Light set state received")
+                                args = json.loads(output.arguments or "{}")
+                                light_state = LightState(**args["light_state"])
+                                # set_light_state uses subprocess (blocking), so run it in a thread
+                                result_text = await asyncio.to_thread(set_light_state, light_state)
+                                if not "Error setting light state" in result_text:
+                                    logger.info(f"Tool call: set_light_state → {result_text}")
+                                    await reachy.async_play_move(EMOTION_MOVES.get("success1"))
+                                    # Generally stop after first light command
+                                    #stop_event.set()
+                                    #raise asyncio.CancelledError()
                             else:
                                 logger.error(f"Unrecognized tool received. Name = {tool_name}")
 

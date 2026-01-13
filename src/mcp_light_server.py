@@ -1,21 +1,29 @@
-from multiprocessing.resource_sharer import DupFd
+from typing import Annotated
 
 from mcp.server.fastmcp import FastMCP
 import subprocess
-from dataclasses import dataclass
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-mcp = FastMCP("Tools Server")
+LIGHTS_MCP = FastMCP("Tools Server")
 DEFAULT_IP = "192.168.1.201"
 
 class LightState(BaseModel):
     """ Tracks the state of an LED. Defaults are the default on state"""
     on_or_off: str = "on"  # this is a string to match the CLI
-    cct: bool = True  # this is the nice warm white
-    brightness: int = 100
-    color: tuple[int, int, int] = (0, 0, 0)
+    cct: bool = Field(
+        default=True,
+        description="True for warm-white (CCT) mode. Set to False when a specific RGB color is requested. Set True"
+                    "if no color was requested, as they probably want the warm-white",
+    )
+    brightness: int = Field(default=100, ge=0, le=100)
 
-@mcp.tool()
+    color: list[Annotated[int, Field(ge=0, le=255)]] = Field(
+        default_factory=lambda: [0, 0, 0],
+        min_length=3,
+        max_length=3,
+    )
+
+@LIGHTS_MCP.tool()
 def get_light_state() -> LightState:
     """
     Get the state of the (LED) lights
@@ -35,7 +43,7 @@ def get_light_state() -> LightState:
     return LightState(on_or_off, cct, brightness, color)
 
 
-@mcp.tool()
+@LIGHTS_MCP.tool()
 def set_light_state(light_state: LightState) -> str:
     """
     Set the state of the (LED) lights
@@ -47,7 +55,7 @@ def set_light_state(light_state: LightState) -> str:
         A message indicating the result of the operation
     """
     # Build the command based on the light state
-    cmd_parts = [f'flux_led {DEFAULT_IP}']
+    cmd_parts = [f'uv run flux_led {DEFAULT_IP}']
 
     if light_state.on_or_off == "off":
         cmd_parts.append('--off')
@@ -78,4 +86,4 @@ def set_light_state(light_state: LightState) -> str:
 
 
 if __name__ == "__main__":
-    mcp.run()
+    LIGHTS_MCP.run()
