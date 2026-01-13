@@ -31,14 +31,6 @@ WAKE_MODEL = Model(
     )
 WAKE_THRESHOLD=0.5
 
-BEBOOP_MOVE_NAMES = [
-    "yes1",
-    "laughing1",
-    "understanding1",
-
-
-
-]
 EMOTION_MOVES = RecordedMoves("pollen-robotics/reachy-mini-emotions-library")
 BEBOOP_PROMPT = f"""
 You are a helpful little robot with just a head, no arms and legs. You're actually a 
@@ -47,7 +39,7 @@ specific emotion move from the following list:
  {str({name: EMOTION_MOVES.get(name).description for name in EMOTION_MOVES.list_moves()})}
 
 Answer with just the name of the move that outlines the type of response you'd give, like
-if you were confused you might reply with "uncertain1"
+if you were confused you might reply with "uncertain1".
 
 If you're dismissed, or asked to go to sleep, call the "end_conversation" tool.
 """
@@ -59,17 +51,13 @@ def listen_for_wakeword(reachy: ReachyMini) -> float:
     Returns:
         direction_of_arrival: The direction the sound came from
     """
-
     mic_rate = reachy.media.get_input_audio_samplerate()
-    _ = reachy.media.get_audio_sample()   # sometimes it seems to still have the previous
-
     frames = 1280 * 5  # OpenWakeWord wants multiples of 1280 samples
     delay_s = frames / mic_rate
     time.sleep(delay_s)
     doa = 0
 
     logger.info(f"Starting wakeword listening using model {WAKE_MODEL_NAME}")
-    reachy.goto_sleep()
     while True:
         # Get audio
         chunk = reachy.media.get_audio_sample()
@@ -103,7 +91,6 @@ def listen_for_wakeword(reachy: ReachyMini) -> float:
         time.sleep(delay_s)
 
     logger.info("Wakeword Received!")
-    reachy.wake_up()
     #reachy.set_target_body_yaw(-1 * doa)
     return doa
 
@@ -112,13 +99,17 @@ def main():
     """
     Main conversation App
     """
-    while True:
-        # Tried starting the daemon here, but it wouldn't work, start it separately
-        with ReachyMini(automatic_body_yaw=True) as reachy:
-            reachy.media.start_recording()  # in case it's not already started
-            _ = listen_for_wakeword(reachy)
+    client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
+    # Tried starting the daemon here, but it wouldn't work, start it separately
+    with ReachyMini(automatic_body_yaw=True) as reachy:
+        while True:
+            reachy.media.start_recording()
             try:
-                asyncio.run(main_conversation(reachy))
+                reachy.goto_sleep()
+                _ = listen_for_wakeword(reachy)
+                reachy.wake_up()
+                # Main conversation
+                asyncio.run(main_conversation(reachy, client))
             except KeyboardInterrupt:
                 logger.info("Keyboard interrupt received, shutting down")
                 break
@@ -126,16 +117,18 @@ def main():
                 reachy.stop_recording()
 
 
-async def main_conversation(reachy: ReachyMini):
+async def main_conversation(
+        reachy: ReachyMini,
+        client: AsyncOpenAI):
     """
     Main conversation coroutine, receives voice in real time and generates
     either robot responses or voice output.
 
     Args:
         reachy: The robot instance
+        client: Asynchronous OpenAI client for realtime conversations
     """
     mic_rate = reachy.media.get_input_audio_samplerate()
-    client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
     stop_event = asyncio.Event()
 
     # ToDo: Load the mcp_server tools and convert to functions
@@ -231,15 +224,16 @@ async def main_conversation(reachy: ReachyMini):
                         await reachy.play_move(EMOTION_MOVES.get("confused1"))
 
                 elif event.type == "response.done":
-                    output = event.response.output[0]
-                    if output.type == "function_call":
-                        tool_name = output.name
-                        if tool_name == "end_conversation":
-                            logger.info("Tool call: end_conversation → stopping conversation loop.")
-                            stop_event.set()  # or cancel tasks / break out as appropriate
-                            raise asyncio.CancelledError()
-                        else:
-                            logger.error(f"Unrecognized tool receieved. Name = {tool_name}")
+                    if len(event.response.output) > 0:
+                        output = event.response.output[0]
+                        if output.type == "function_call":
+                            tool_name = output.name
+                            if tool_name == "end_conversation":
+                                logger.info("Tool call: end_conversation → stopping conversation loop.")
+                                stop_event.set()  # or cancel tasks / break out as appropriate
+                                raise asyncio.CancelledError()
+                            else:
+                                logger.error(f"Unrecognized tool received. Name = {tool_name}")
 
         logger.info("Conversation Started... (Ctrl+C to stop)")
         try:
