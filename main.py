@@ -37,14 +37,13 @@ WAKE_MODEL = Model(
 WAKE_THRESHOLD=0.5
 
 # Silent Robot
-#DANCE_MOVES = RecordedMoves("pollen-robotics/reachy-mini-dances-library")
 EMOTION_MOVES = RecordedMoves("pollen-robotics/reachy-mini-emotions-library")
 BEBOOP_PROMPT = f"""
 You are a helpful little robot with just a head, no arms and legs. You're actually a 
 reachy-mini robot from HuggingFace with the name Marvin.
 
-Answer with just the name of the move that outlines the type of response you'd give, like
-if you were confused you might reply with "uncertain1".
+You can't talk, so you will need to pick tools for displaying emotions or performing actions.
+You can provide a response providing a very brief explanation for your tool choice.
 
 If you're dismissed, or asked to go to sleep, call the "end_conversation" tool.
 """
@@ -261,8 +260,7 @@ async def conversation(
                                 stop_event.set()  # or cancel tasks / break out as appropriate
                                 raise asyncio.CancelledError()
                             elif tool_name == "set_light_state":
-                                # Currently just calling the light directly, may remove MCP
-                                logger.info("Light set state received")
+                                logger.info("Tool call: set_light_state state received")
                                 args = json.loads(output.arguments or "{}")
                                 light_state = LightState(**args["light_state"])
                                 # set_light_state uses subprocess (blocking), so run it in a thread
@@ -273,6 +271,14 @@ async def conversation(
                                     # Generally stop after first light command
                                     #stop_event.set()
                                     #raise asyncio.CancelledError()
+                            elif tool_name == "show_emotion":
+                                logger.info(f"Tool call: show_emotion for {output.arguments}")
+                                try:
+                                    move_name = json.loads(output.arguments)["move_name"]
+                                    await reachy.async_play_move(EMOTION_MOVES.get(move_name))
+                                except Exception:
+                                    logger.error("Move {output.arguments} failed to play")
+                                    await reachy.async_play_move(EMOTION_MOVES.get("confused1"))
                             else:
                                 logger.error(f"Unrecognized tool received. Name = {tool_name}")
 

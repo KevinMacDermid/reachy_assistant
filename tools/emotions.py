@@ -7,6 +7,7 @@ from reachy_mini.motion.recorded_move import RecordedMoves
 
 EMOTIONS_MCP = FastMCP("Emotions")
 EMOTION_MOVES = RecordedMoves("pollen-robotics/reachy-mini-emotions-library")
+#DANCE_MOVES = RecordedMoves("pollen-robotics/reachy-mini-dances-library")
 
 # Subset of all available moves - simplify + keep shorter moves
 EMOTION_NAMES = (
