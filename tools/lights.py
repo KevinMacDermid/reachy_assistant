@@ -4,7 +4,7 @@ from mcp.server.fastmcp import FastMCP
 import subprocess
 from pydantic import BaseModel, Field
 
-LIGHTS_MCP = FastMCP("Tools Server")
+LIGHTS_MCP = FastMCP("Lights Server")
 DEFAULT_IP = "192.168.1.201"
 
 class LightState(BaseModel):

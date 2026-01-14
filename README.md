@@ -5,6 +5,7 @@ To Do:
  - Trigger Voice Conversation 
 
 Other Ideas:
+ - Make it possible to cancel emotion moves
  - Look based on direction of arrival
  - Face tracking + scan (look at you) (run in separate process)
  - Link / embed some of the existing apps (20 questions, hand tracking)

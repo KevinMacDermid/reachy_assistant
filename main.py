@@ -22,7 +22,7 @@ from scipy.signal import resample
 from openwakeword.model import Model
 import logging
 import time
-from src.mcp_light_server import LIGHTS_MCP, LightState, set_light_state
+from tools.lights import LIGHTS_MCP, LightState, set_light_state
 
 _ = load_dotenv()
 logger = logging.getLogger(__name__)
