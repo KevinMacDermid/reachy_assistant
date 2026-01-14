@@ -23,6 +23,7 @@ from openwakeword.model import Model
 import logging
 import time
 from tools.lights import LIGHTS_MCP, LightState, set_light_state
+from tools.emotions import EMOTIONS_MCP
 
 _ = load_dotenv()
 logger = logging.getLogger(__name__)
@@ -40,9 +41,7 @@ WAKE_THRESHOLD=0.5
 EMOTION_MOVES = RecordedMoves("pollen-robotics/reachy-mini-emotions-library")
 BEBOOP_PROMPT = f"""
 You are a helpful little robot with just a head, no arms and legs. You're actually a 
-reachy-mini robot from HuggingFace with the name Marvin. You can only respond with 
-specific emotion move from the following list:
- {str({name: EMOTION_MOVES.get(name).description for name in EMOTION_MOVES.list_moves()})}
+reachy-mini robot from HuggingFace with the name Marvin.
 
 Answer with just the name of the move that outlines the type of response you'd give, like
 if you were confused you might reply with "uncertain1".
@@ -50,8 +49,7 @@ if you were confused you might reply with "uncertain1".
 If you're dismissed, or asked to go to sleep, call the "end_conversation" tool.
 """
 
-# Lighting Tools
-
+# Tools
 TOOLS = []
 for tool in asyncio.run(LIGHTS_MCP.list_tools()):
     TOOLS.append(
@@ -62,6 +60,16 @@ for tool in asyncio.run(LIGHTS_MCP.list_tools()):
             type="function",
         )
     )
+for tool in asyncio.run(EMOTIONS_MCP.list_tools()):
+    TOOLS.append(
+        RealtimeFunctionToolParam(
+            name=tool.name,
+            description=tool.description,
+            parameters=tool.inputSchema,
+            type="function",
+        )
+    )
+
 TOOLS.append(
     RealtimeFunctionToolParam(
         name="end_conversation",
@@ -140,7 +148,7 @@ def main():
                 _ = listen_for_wakeword(reachy)
                 reachy.wake_up()
                 # Main conversation
-                asyncio.run(main_conversation(reachy, client))
+                asyncio.run(conversation(reachy, client))
             except KeyboardInterrupt:
                 logger.info("Keyboard interrupt received, shutting down")
                 break
@@ -148,7 +156,7 @@ def main():
                 reachy.stop_recording()
 
 
-async def main_conversation(
+async def conversation(
         reachy: ReachyMini,
         client: AsyncOpenAI):
     """
