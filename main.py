@@ -34,7 +34,7 @@ WAKE_MODEL_NAME = "hey_marvin"
 WAKE_MODEL = Model(
         wakeword_model_paths=[os.path.join(os.path.dirname(__file__), "models", f"{WAKE_MODEL_NAME}.onnx")]
     )
-WAKE_THRESHOLD=0.5
+WAKE_THRESHOLD=0.3
 
 # Silent Robot
 EMOTION_MOVES = RecordedMoves("pollen-robotics/reachy-mini-emotions-library")
@@ -281,9 +281,9 @@ async def conversation(
                             tool_name = output.name
                             if tool_name == "end_conversation":
                                 logger.info("Tool call: end_conversation → stopping conversation loop.")
-                                reachy.goto_sleep()
-                                stop_event.set()  # or cancel tasks / break out as appropriate
-                                raise asyncio.CancelledError()
+                                stop_event.set()
+                                await conn.close()
+                                return
                             elif tool_name == "set_light_state":
                                 logger.info("Tool call: set_light_state state received")
                                 args = json.loads(output.arguments or "{}")
@@ -294,8 +294,9 @@ async def conversation(
                                     logger.info(f"Tool call: set_light_state → {result_text}")
                                     await reachy.async_play_move(EMOTION_MOVES.get("success1"))
                                     # Generally stop after first light command
-                                    #stop_event.set()
-                                    #raise asyncio.CancelledError()
+                                    stop_event.set()
+                                    await conn.close()
+                                    return
                             elif tool_name == "show_emotion":
                                 logger.info(f"Tool call: show_emotion for {output.arguments}")
                                 try:
