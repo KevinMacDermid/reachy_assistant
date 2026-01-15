@@ -43,7 +43,8 @@ You are a helpful little robot with just a head, no arms and legs. You're actual
 reachy-mini robot from HuggingFace with the name Marvin.
 
 You can't talk, so you will need to pick tools for displaying emotions or performing actions.
-You can provide a response providing a very brief explanation for your tool choice.
+You can provide a response providing a very brief explanation for your tool choice. Generally pick an emotion
+instead of a response every time.
 
 If you're dismissed, or asked to go to sleep, call the "end_conversation" tool.
 """
@@ -169,6 +170,9 @@ async def conversation(
     mic_rate = reachy.media.get_input_audio_samplerate()
     stop_event = asyncio.Event()
 
+    user_idle_timeout_s = 10.0
+    last_user_activity_time = asyncio.get_event_loop().time()
+
     logger.info("Connecting to OpenAI...")
     async with client.realtime.connect(model="gpt-4o-realtime-preview") as conn:
         # Configure session for realtime conversation
@@ -195,13 +199,35 @@ async def conversation(
         )
         await conn.session.update(session=session_config)
 
+        async def idle_watchdog():
+            """Stop the conversation if no user activity occurs for a while."""
+            nonlocal last_user_activity_time
+            try:
+                while not stop_event.is_set():
+                    await asyncio.sleep(0.25)
+                    now = asyncio.get_event_loop().time()
+                    if (now - last_user_activity_time) >= user_idle_timeout_s:
+                        logger.info(
+                            "User idle for %.1fs (>= %.1fs). Timing out conversation.",
+                            (now - last_user_activity_time),
+                            user_idle_timeout_s,
+                        )
+                        stop_event.set()
+                        try:
+                            await conn.close()
+                        except Exception:
+                            pass
+                        return
+            except asyncio.CancelledError:
+                raise
+
         async def send_audio():
             """Continuously poll mic and send to OpenAI."""
             try:
-                while not stop_event.set():
+                while not stop_event.is_set():
                     chunk = reachy.media.get_audio_sample()
                     if chunk is None:
-                        await asyncio.sleep(0.01)
+                        await asyncio.sleep(0.1)
                         continue
 
                     # Take single channel
@@ -231,11 +257,14 @@ async def conversation(
 
         async def receive_events():
             """Listen for transcription events."""
+            nonlocal last_user_activity_time
             async for event in conn:
                 if event.type == "conversation.item.input_audio_transcription.partial":
+                    last_user_activity_time = asyncio.get_event_loop().time()
                     logger.debug(f"Partial: {event.transcript}")
 
                 elif event.type == "conversation.item.input_audio_transcription.completed":
+                    last_user_activity_time = asyncio.get_event_loop().time()
                     logger.info(f"\nUser: {event.transcript}")
 
                 elif event.type == "error":
@@ -243,13 +272,9 @@ async def conversation(
 
                 elif event.type == "response.output_text.done":
                     logger.info(f"Model: {event.text}")
-                    try:
-                        await reachy.async_play_move(EMOTION_MOVES.get(event.text))
-                    except ValueError:
-                        logger.error("Move {event.text} was not in the emotion moves list")
-                        await reachy.async_play_move(EMOTION_MOVES.get("confused1"))
 
                 elif event.type == "response.done":
+                    last_user_activity_time = asyncio.get_event_loop().time()
                     if len(event.response.output) > 0:
                         output = event.response.output[0]
                         if output.type == "function_call":
@@ -283,13 +308,18 @@ async def conversation(
                                 logger.error(f"Unrecognized tool received. Name = {tool_name}")
 
         logger.info("Conversation Started... (Ctrl+C to stop)")
+        watchdog_task = asyncio.create_task(idle_watchdog())
         try:
             # Run both loops concurrently
-            await asyncio.gather(send_audio(), receive_events())
-        except asyncio.CancelledError:
-            pass
+            await asyncio.gather(send_audio(), receive_events(), watchdog_task)
         finally:
-            reachy.media.stop_recording()
+            stop_event.set()
+            watchdog_task.cancel()
+            reachy.goto_sleep()
+            try:
+                await watchdog_task
+            except asyncio.CancelledError:
+                pass
 
 
 if __name__ == '__main__':
