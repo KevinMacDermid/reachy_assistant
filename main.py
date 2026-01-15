@@ -48,6 +48,8 @@ instead of a response every time.
 
 If you're dismissed, or asked to go to sleep, call the "end_conversation" tool.
 """
+MOVE_GOTO_DURATION = 0.5
+USER_IDLE_TIMEOUT = 12.0
 
 # Tools
 TOOLS = []
@@ -170,7 +172,6 @@ async def conversation(
     mic_rate = reachy.media.get_input_audio_samplerate()
     stop_event = asyncio.Event()
 
-    user_idle_timeout_s = 10.0
     last_user_activity_time = asyncio.get_event_loop().time()
 
     logger.info("Connecting to OpenAI...")
@@ -206,11 +207,11 @@ async def conversation(
                 while not stop_event.is_set():
                     await asyncio.sleep(0.25)
                     now = asyncio.get_event_loop().time()
-                    if (now - last_user_activity_time) >= user_idle_timeout_s:
+                    if (now - last_user_activity_time) >= USER_IDLE_TIMEOUT:
                         logger.info(
                             "User idle for %.1fs (>= %.1fs). Timing out conversation.",
                             (now - last_user_activity_time),
-                            user_idle_timeout_s,
+                            USER_IDLE_TIMEOUT,
                         )
                         stop_event.set()
                         try:
@@ -292,7 +293,8 @@ async def conversation(
                                 result_text = await asyncio.to_thread(set_light_state, light_state)
                                 if not "Error setting light state" in result_text:
                                     logger.info(f"Tool call: set_light_state → {result_text}")
-                                    await reachy.async_play_move(EMOTION_MOVES.get("success1"))
+                                    await reachy.async_play_move(EMOTION_MOVES.get("success1"),
+                                                                 initial_goto_duration=MOVE_GOTO_DURATION)
                                     # Generally stop after first light command
                                     stop_event.set()
                                     await conn.close()
@@ -301,10 +303,12 @@ async def conversation(
                                 logger.info(f"Tool call: show_emotion for {output.arguments}")
                                 try:
                                     move_name = json.loads(output.arguments)["move_name"]
-                                    await reachy.async_play_move(EMOTION_MOVES.get(move_name))
+                                    await reachy.async_play_move(EMOTION_MOVES.get(move_name),
+                                                                 initial_goto_duration=MOVE_GOTO_DURATION)
                                 except Exception:
                                     logger.error("Move {output.arguments} failed to play")
-                                    await reachy.async_play_move(EMOTION_MOVES.get("confused1"))
+                                    await reachy.async_play_move(EMOTION_MOVES.get("confused1"),
+                                                                 initial_goto_duration=MOVE_GOTO_DURATION)
                             else:
                                 logger.error(f"Unrecognized tool received. Name = {tool_name}")
 
