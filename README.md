@@ -69,18 +69,24 @@ When I collect samples using robot.media.get_audio_sample(), I get samples, but 
 Evidence:
  - Checked the mic on Pipewire, it's also reading no input.
  - Tried conversation app, it's also no longer getting input
-
-**I think the robot can get in a state where the audio isn't working, not clear if that's
-triggered by software, or maybe the USB hub.**
-
-**Can happen from software, unplug it and plug it back in seems to fix it**
+ - ALSA driver is getting all zeroes
+ - Plug Cycle fixes it
+ - Power cycle of Reachy Mini does not fix it.
+ - Pollen robotics could not reproduce
 
 Tested raw samples from driver with `arecord -D plughw:0,0 -d 5 -f S16_LE -r 16000 -t raw | od -x`,
 it's getting all zeroes.
 
 On Frisket, turned off USB suspend for this device using 
 `echo "on" | sudo tee /sys/bus/usb/devices/3-3/power/control`
-will see if it's caused by suspend or not.
+will see if it's caused by suspend or not. Didn't help.
+
+
+To Do:
+Theory: Could still be autosuspend in laptop, determined that robot is behind an internal hub
+ - Check how long until it starts failing (90 minutes first one)
+ - Disable sleep mode entirely ('sudo sh -c 'echo -1 > /sys/module/usbcore/parameters/autosuspend')
+ - Connect directly to Megabyte, no hub and measure.
 
 
 ## Direction of Arrival Issue
@@ -94,3 +100,10 @@ SUBSYSTEM=="usb", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d3", MODE="0666"
 SUBSYSTEM=="usb", ATTRS{idVendor}=="38fb", MODE="0666", GROUP="dialout"
 ```
 The last line was the one that seemed to fix it.
+
+## Memory Leak
+Leaving `reachy-mini-daemon` running appears to consume increasing memory with time, even
+when no application is started.
+
+Seeing if `--headless` helps, otherwise will need to restart it every so often.
+2026-01-19 20:36 %MEM 2.9
