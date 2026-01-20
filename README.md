@@ -75,6 +75,14 @@ triggered by software, or maybe the USB hub.**
 
 **Can happen from software, unplug it and plug it back in seems to fix it**
 
+Tested raw samples from driver with `arecord -D plughw:0,0 -d 5 -f S16_LE -r 16000 -t raw | od -x`,
+it's getting all zeroes.
+
+On Frisket, turned off USB suspend for this device using 
+`echo "on" | sudo tee /sys/bus/usb/devices/3-3/power/control`
+will see if it's caused by suspend or not.
+
+
 ## Direction of Arrival Issue
 Had problem with USB permissions, had to update /etc/udev/rules.d/99-reachy-mini.rules to
 ```
