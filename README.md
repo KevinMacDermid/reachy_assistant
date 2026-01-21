@@ -44,10 +44,9 @@ https://huggingface.co/spaces/luisomoreau/hey_reachy_wake_word_detection
 Looks like they have conversation with face tracking already
 https://huggingface.co/spaces/pollen-robotics/reachy_mini_conversation_app/tree/main/src/reachy_mini_conversation_app
 
-https://platform.openai.com/docs/guides/voice-agents?voice-agent-architecture=chained
-
 
 # Issues
+
 ## Audio Troubles
 Sometimes have trouble getting audio from the robot, not sure the problem yet,
 but saw that if an error is raised by the daemon it can be because the audio device
@@ -84,7 +83,7 @@ will see if it's caused by suspend or not. Didn't help.
 
 To Do:
 Theory: Could still be autosuspend in laptop, determined that robot is behind an internal hub
- - Check how long until it starts failing (90 minutes first one)
+ - Check how long until it starts failing (90 minutes first one, 111 minutes second (7000 seconds))
  - Disable sleep mode entirely ('sudo sh -c 'echo -1 > /sys/module/usbcore/parameters/autosuspend')
  - Connect directly to Megabyte, no hub and measure.
 
@@ -100,10 +99,3 @@ SUBSYSTEM=="usb", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d3", MODE="0666"
 SUBSYSTEM=="usb", ATTRS{idVendor}=="38fb", MODE="0666", GROUP="dialout"
 ```
 The last line was the one that seemed to fix it.
-
-## Memory Leak
-Leaving `reachy-mini-daemon` running appears to consume increasing memory with time, even
-when no application is started.
-
-Seeing if `--headless` helps, otherwise will need to restart it every so often.
-2026-01-19 20:36 %MEM 2.9
