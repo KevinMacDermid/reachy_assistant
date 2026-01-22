@@ -6,6 +6,7 @@ import asyncio
 import base64
 import os
 import numpy as np
+import sys
 from openai import AsyncOpenAI
 from openai.types.realtime import (
     RealtimeSessionCreateRequestParam,
@@ -27,6 +28,13 @@ from tools.emotions import EMOTIONS_MCP
 
 _ = load_dotenv()
 logger = logging.getLogger(__name__)
+
+# Exit code for supervisor to detect zero-audio failures.
+ZERO_AUDIO_EXIT_CODE = 42
+
+
+class ZeroAudioError(RuntimeError):
+    pass
 
 # Wake model
 TARGET_SAMPLE_RATE = 24000
@@ -118,7 +126,8 @@ def listen_for_wakeword(reachy: ReachyMini) -> float:
             chunk = (chunk * np.iinfo(np.int16).max).astype(np.int16, copy=False)
 
         if np.all(chunk == 0):
-            logger.warning("All audio samples are zero going to wake word model!")
+            logger.error("All audio samples are zero going to wake word model!")
+            raise ZeroAudioError("Zero audio samples detected")
 
         # OpenWakeWord model has buffer internally, so just send latest chunk
         pred = WAKE_MODEL.predict(chunk)[WAKE_MODEL_NAME]
@@ -154,6 +163,9 @@ def main():
             except KeyboardInterrupt:
                 logger.info("Keyboard interrupt received, shutting down")
                 break
+            except ZeroAudioError:
+                logger.error("Exiting due to zero audio samples.")
+                sys.exit(ZERO_AUDIO_EXIT_CODE)
             finally:
                 reachy.stop_recording()
 
@@ -330,4 +342,3 @@ async def conversation(
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
     main()
-
