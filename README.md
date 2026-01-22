@@ -11,6 +11,14 @@ Other Ideas:
  - Face tracking + scan (look at you) (run in separate process)
  - Link / embed some of the existing apps (20 questions, hand tracking)
 
+## Wake Word
+Working on this - need to find and run some existing voice model
+https://huggingface.co/spaces/luisomoreau/hey_reachy_wake_word_detection
+
+## Conversation
+Looks like they have conversation with face tracking already
+https://huggingface.co/spaces/pollen-robotics/reachy_mini_conversation_app/tree/main/src/reachy_mini_conversation_app
+
 # Installation
 ## Install PortAudio
 This is required for OpenWakeWord, and is not installed automatically.
@@ -30,41 +38,34 @@ Run
 uv sync
 ```
 
-# Running Daemon
-HuggingFace provides a daemon that provides API for the robot.
+# Running 
+Need to run the daemon and the application, with a watchdog that waits for the "audio samples are all 0" issue
+and then restarts USB hub.
+
+**Session needs sudo privileges**
 ```bash
-uv run reachy-mini-daemon
+uv run python run_reachy_supervisor.py
 ```
-
-# Wake Word
-Working on this - need to find and run some existing voice model
-https://huggingface.co/spaces/luisomoreau/hey_reachy_wake_word_detection
-
-# Conversation
-Looks like they have conversation with face tracking already
-https://huggingface.co/spaces/pollen-robotics/reachy_mini_conversation_app/tree/main/src/reachy_mini_conversation_app
 
 
 # Issues
 
-## Audio Troubles
+## Audio - All samples are 0.0
 Sometimes have trouble getting audio from the robot, not sure the problem yet,
 but saw that if an error is raised by the daemon it can be because the audio device
 is already claimed, you can check using
 ```bash
 arecord -l
 ```
-### Issue 1: Failed Conversation App
-Tested on Megabyte using conversation app, it also doesn't get or play audio from the robot
-- Startup sound does play, sometimes had to adjust volume for it to work
-- Unplug and replug USB, now the microphone looks good in settings, and conversation app works.
-- **Do not leave the sound window open, Pipewire will hog the device**. Can tell if this happens as there will be
-a warning
+Don't leave the sound settings open, as they use the device.
 
-Once this is fixed the converation app is working fine.
+### Issue 2: USB Hub Failure
+When I collect samples using robot.media.get_audio_sample(), I get samples, but they're all 0.0.
 
-### Issue 2: Failed Audio Sample
-When I collect samples using robot.media.get_audio_sample(), I get samples, but they're all 0.0
+Turns out, this is because the interal USB hub in Frisket gets stuck, the script `reset_internal_hub.sh` addresses
+this.
+
+Here are the debugging notes:
 Evidence:
  - Checked the mic on Pipewire, it's also reading no input.
  - Tried conversation app, it's also no longer getting input
@@ -79,14 +80,6 @@ it's getting all zeroes.
 On Frisket, turned off USB suspend for this device using 
 `echo "on" | sudo tee /sys/bus/usb/devices/3-3/power/control`
 will see if it's caused by suspend or not. Didn't help.
-
-
-To Do:
-Theory: Could still be autosuspend in laptop, determined that robot is behind an internal hub
- - Check how long until it starts failing (90 minutes first one, 111 minutes second (7000 seconds))
- - Disable sleep mode entirely ('sudo sh -c 'echo -1 > /sys/module/usbcore/parameters/autosuspend')
- - Connect directly to Megabyte, no hub and measure.
-
 
 ## Direction of Arrival Issue
 Had problem with USB permissions, had to update /etc/udev/rules.d/99-reachy-mini.rules to
