@@ -11,5 +11,6 @@ dependencies = [
     "scipy-stubs~=1.16.3",
     "python-dotenv",
     "openai",
-    "flux_led==1.2.0"
+    "flux_led==1.2.0",
+    "numpy==2.4.1"
 ]
