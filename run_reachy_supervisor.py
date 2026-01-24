@@ -4,6 +4,8 @@ import signal
 import subprocess
 import sys
 from pathlib import Path
+from time import sleep
+
 from main import ZERO_AUDIO_EXIT_CODE
 import time
 
@@ -21,26 +23,6 @@ def _terminate_process_group(proc: subprocess.Popen, name: str, timeout_s: float
     except subprocess.TimeoutExpired:
         os.killpg(proc.pid, signal.SIGKILL)
         proc.wait()
-
-
-def _start_daemon(root_dir: Path) -> subprocess.Popen:
-    return subprocess.Popen(
-        ["/bin/bash", str(root_dir / "script" / "start_daemon.sh")],
-        cwd=str(root_dir),
-        start_new_session=True,
-    )
-
-
-def _start_main(root_dir: Path) -> subprocess.Popen:
-    return subprocess.Popen(
-        ["uv", "run", "python", "main.py"],
-        cwd=str(root_dir),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,
-        start_new_session=True,
-    )
 
 
 def _monitor_main(main_proc: subprocess.Popen) -> int:
@@ -62,9 +44,24 @@ def main() -> int:
     root_dir = Path(__file__).resolve().parents[0]
 
     while True:
-        daemon_proc = _start_daemon(root_dir)
+        # Want "--no-wake-up-on-start", but found it wouldn't wake up later
+        daemon_proc = subprocess.Popen(
+            [
+                "uv", "run", "reachy-mini-daemon", "--headless"
+            ],
+            cwd=str(root_dir),
+            start_new_session=True,
+        )
         time.sleep(20)
-        main_proc = _start_main(root_dir)
+        main_proc = subprocess.Popen(
+            ["uv", "run", "python", "main.py"],
+            cwd=str(root_dir),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            start_new_session=True,
+        )
 
         try:
             main_exit_code = _monitor_main(main_proc)
@@ -83,6 +80,8 @@ def main() -> int:
             if reset_code != 0:
                 print(f"reset_internal_hub.sh failed with exit code {reset_code}", file=sys.stderr)
                 return reset_code
+            print("Waiting before restarting daemon")
+            sleep(20)
             continue
 
         _terminate_process_group(daemon_proc, "reachy-mini-daemon")

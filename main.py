@@ -42,7 +42,7 @@ WAKE_MODEL_NAME = "hey_marvin"
 WAKE_MODEL = Model(
         wakeword_model_paths=[os.path.join(os.path.dirname(__file__), "models", f"{WAKE_MODEL_NAME}.onnx")]
     )
-WAKE_THRESHOLD=0.2
+WAKE_THRESHOLD=0.3
 
 # Silent Robot
 EMOTION_MOVES = RecordedMoves("pollen-robotics/reachy-mini-emotions-library")

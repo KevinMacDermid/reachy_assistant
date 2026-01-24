@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Add your description here"
 requires-python = "==3.11.*"
 dependencies = [
-    "reachy-mini==1.2.10",
+    "reachy-mini==1.2.13",
     "openwakeword==0.4.0",
     "pyaudio==0.2.14",
     "mcp>=1.25.0",
