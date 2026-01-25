@@ -30,13 +30,31 @@ sudo apt install portaudio19-dev
 ## Install Python-SDK
 https://github.com/pollen-robotics/reachy_mini/blob/develop/docs/SDK/installation.md
 
-That includes instructions for allowing access to the USB
+**That includes instructions for allowing access to the USB**
+
+Had and issue with Direction of Arrival with USB permissions, 
+had to update /etc/udev/rules.d/99-reachy-mini.rules to
+```
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d3", MODE="0666", GROUP="dialout"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="38fb", ATTRS{idProduct}=="1001", MODE="0666", GROUP="dialout"
+# Target the raw USB hardware (usb) - This fixes the USBError Errno 13
+SUBSYSTEM=="usb", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d3", MODE="0666", GROUP="dialout"
+# Do the same for the Audio/Camera if they are causing issues
+SUBSYSTEM=="usb", ATTRS{idVendor}=="38fb", MODE="0666", GROUP="dialout"
+```
+The last line was the one that seemed to fix it.
 
 ## Install Dependencies
 Run 
 ```
 uv sync
 ```
+
+## Add Run Internal to Sudoers
+On Frisket, had issue where the internal hub of the laptop gets stuck, added a script for this 
+`./script/reset_internal_hub.sh`, had to adjust sudoers to allow my user to be able to run this
+without sudo privileges. See `visudo`
+
 
 # Running 
 Need to run the daemon and the application, with a watchdog that waits for the "audio samples are all 0" issue
@@ -63,7 +81,7 @@ Don't leave the sound settings open, as they use the device.
 When I collect samples using robot.media.get_audio_sample(), I get samples, but they're all 0.0.
 
 Turns out, this is because the interal USB hub in Frisket gets stuck, the script `reset_internal_hub.sh` addresses
-this.
+this. Had to add edit sudoers to allow my user to always do this, see `visudo`
 
 Here are the debugging notes:
 Evidence:
@@ -82,13 +100,4 @@ On Frisket, turned off USB suspend for this device using
 will see if it's caused by suspend or not. Didn't help.
 
 ## Direction of Arrival Issue
-Had problem with USB permissions, had to update /etc/udev/rules.d/99-reachy-mini.rules to
-```
-SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d3", MODE="0666", GROUP="dialout"
-SUBSYSTEM=="tty", ATTRS{idVendor}=="38fb", ATTRS{idProduct}=="1001", MODE="0666", GROUP="dialout"
-# Target the raw USB hardware (usb) - This fixes the USBError Errno 13
-SUBSYSTEM=="usb", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d3", MODE="0666", GROUP="dialout"
-# Do the same for the Audio/Camera if they are causing issues
-SUBSYSTEM=="usb", ATTRS{idVendor}=="38fb", MODE="0666", GROUP="dialout"
-```
-The last line was the one that seemed to fix it.
+Had to adjust USB permissions, see installation section.
