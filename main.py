@@ -170,6 +170,15 @@ def main():
                 reachy.stop_recording()
 
 
+def _log_task_result(task: asyncio.Task[None]) -> None:
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        logger.warning("Move task failed: %s", e)
+
+
 async def conversation(
         reachy: ReachyMini,
         client: AsyncOpenAI):
@@ -315,8 +324,12 @@ async def conversation(
                                 logger.info(f"Tool call: show_emotion for {output.arguments}")
                                 try:
                                     move_name = json.loads(output.arguments)["move_name"]
-                                    await reachy.async_play_move(EMOTION_MOVES.get(move_name),
-                                                                 initial_goto_duration=MOVE_GOTO_DURATION)
+                                    # Create task here to avoid blocking
+                                    move_task = asyncio.create_task(
+                                        reachy.async_play_move(EMOTION_MOVES.get(move_name),
+                                                               initial_goto_duration=MOVE_GOTO_DURATION)
+                                    )
+                                    move_task.add_done_callback(_log_task_result)
                                 except Exception:
                                     logger.error("Move {output.arguments} failed to play")
                                     await reachy.async_play_move(EMOTION_MOVES.get("confused1"),
