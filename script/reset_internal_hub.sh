@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Resets the internal hub on Frisket
+# **Needs root privileges - may need to add to sudoers**
 set -e
 
 # IDs for the Terminus Technology internal hub
@@ -22,9 +23,9 @@ for dev in /sys/bus/usb/devices/*; do
 
       echo "🔁 Resetting hub at $HUB_PATH..."
       # Unbinding/binding the hub resets all devices connected to it
-      echo "$HUB_PATH" | sudo tee /sys/bus/usb/drivers/usb/unbind > /dev/null
+      echo "$HUB_PATH" | tee /sys/bus/usb/drivers/usb/unbind > /dev/null
       sleep 2
-      echo "$HUB_PATH" | sudo tee /sys/bus/usb/drivers/usb/bind > /dev/null
+      echo "$HUB_PATH" | tee /sys/bus/usb/drivers/usb/bind > /dev/null
       echo "✅ Hub reset complete."
     fi
   fi
