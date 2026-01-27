@@ -10,7 +10,6 @@ from main import ZERO_AUDIO_EXIT_CODE
 import time
 
 
-
 def _terminate_process_group(proc: subprocess.Popen, name: str, timeout_s: float = 5.0) -> None:
     if proc.poll() is not None:
         return
@@ -31,13 +30,6 @@ def _monitor_main(main_proc: subprocess.Popen) -> int:
         sys.stdout.write(line)
         sys.stdout.flush()
     return main_proc.wait()
-
-
-def _run_reset(root_dir: Path) -> int:
-    return subprocess.run(
-        ["/bin/bash", str(root_dir / "script" / "reset_internal_hub.sh")],
-        cwd=str(root_dir),
-    ).returncode
 
 
 def main() -> int:
@@ -76,7 +68,9 @@ def main() -> int:
         if main_exit_code == ZERO_AUDIO_EXIT_CODE:
             _terminate_process_group(main_proc, "main.py")
             _terminate_process_group(daemon_proc, "reachy-mini-daemon")
-            reset_code = _run_reset(root_dir)
+            # Needs sudo permission, added this script to sudoers to allow no password access
+            reset_code =  subprocess.run(
+                ["sudo", str(Path("/usr") / "local" / "bin" / "reset_internal_hub.sh")]).returncode
             if reset_code != 0:
                 print(f"reset_internal_hub.sh failed with exit code {reset_code}", file=sys.stderr)
                 return reset_code
