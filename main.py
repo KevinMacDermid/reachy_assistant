@@ -1,5 +1,4 @@
 import json
-
 from reachy_mini.motion.recorded_move import RecordedMoves
 from dotenv import load_dotenv
 import asyncio
@@ -25,16 +24,16 @@ import logging
 import time
 from tools.lights import LIGHTS_MCP, LightState, set_light_state
 from tools.emotions import EMOTIONS_MCP
+from enum import Enum
 
 _ = load_dotenv()
 logger = logging.getLogger(__name__)
 
 # Exit code for supervisor to detect zero-audio failures.
 ZERO_AUDIO_EXIT_CODE = 42
-
-
 class ZeroAudioError(RuntimeError):
     pass
+
 
 # Wake model
 TARGET_SAMPLE_RATE = 24000
@@ -44,6 +43,11 @@ WAKE_MODEL = Model(
     )
 WAKE_THRESHOLD=0.3
 
+class ConversationMode(Enum):
+    BEBOOP = "beboop"
+    VOICE = "voice"
+
+CONV_MODE = ConversationMode.VOICE
 # Silent Robot
 EMOTION_MOVES = RecordedMoves("pollen-robotics/reachy-mini-emotions-library")
 BEBOOP_PROMPT = f"""
@@ -90,6 +94,26 @@ TOOLS.append(
             "required": [],
         },
         type="function"
+    )
+)
+
+TOOLS.append(
+    RealtimeFunctionToolParam(
+        name="change_conversation_mode",
+        description="Switch between a robot mode (also called Beboop mode) and a voice mode.",
+        parameters = {
+            "type": "object",
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "enum": [m.value for m in ConversationMode],
+                    "description": "Which conversation mode to switch to.",
+                }
+            },
+            "required": ["mode"],
+            "additionalProperties": False,
+        },
+        type = "function"
     )
 )
 
@@ -280,6 +304,7 @@ async def conversation(
         async def receive_events():
             """Listen for transcription events."""
             nonlocal last_user_activity_time
+            global CONV_MODE
             async for event in conn:
                 if event.type == "conversation.item.input_audio_transcription.partial":
                     last_user_activity_time = asyncio.get_event_loop().time()
@@ -306,6 +331,10 @@ async def conversation(
                                 stop_event.set()
                                 await conn.close()
                                 return
+                            elif tool_name == "change_conversation_mode":
+                                mode = json.loads(output.arguments)["mode"]
+                                logger.info(f"Tool call: change_conversation_mode to {mode}")
+                                CONV_MODE = mode
                             elif tool_name == "set_light_state":
                                 logger.info("Tool call: set_light_state state received")
                                 args = json.loads(output.arguments or "{}")
