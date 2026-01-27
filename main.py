@@ -47,7 +47,6 @@ class ConversationMode(Enum):
     BEBOOP = "beboop"
     VOICE = "voice"
 
-CONV_MODE = ConversationMode.VOICE
 # Silent Robot
 EMOTION_MOVES = RecordedMoves("pollen-robotics/reachy-mini-emotions-library")
 BEBOOP_PROMPT = f"""
@@ -118,7 +117,7 @@ TOOLS.append(
 )
 
 
-def listen_for_wakeword(reachy: ReachyMini) -> float:
+def _listen_for_wakeword(reachy: ReachyMini) -> float:
     """
     Blocks until the wakeword is received.
     Returns:
@@ -169,31 +168,6 @@ def listen_for_wakeword(reachy: ReachyMini) -> float:
     return doa
 
 
-def main():
-    """
-    Main conversation App
-    """
-    client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
-    # Tried starting the daemon here, but it wouldn't work, start it separately
-    with ReachyMini(automatic_body_yaw=True) as reachy:
-        reachy.goto_sleep()
-        while True:
-            reachy.media.start_recording()
-            try:
-                _ = listen_for_wakeword(reachy)
-                reachy.wake_up()
-                # Main conversation
-                asyncio.run(conversation(reachy, client))
-            except KeyboardInterrupt:
-                logger.info("Keyboard interrupt received, shutting down")
-                break
-            except ZeroAudioError:
-                logger.error("Exiting due to zero audio samples.")
-                sys.exit(ZERO_AUDIO_EXIT_CODE)
-            finally:
-                reachy.stop_recording()
-
-
 def _log_task_result(task: asyncio.Task[None]) -> None:
     try:
         task.result()
@@ -203,26 +177,12 @@ def _log_task_result(task: asyncio.Task[None]) -> None:
         logger.warning("Move task failed: %s", e)
 
 
-async def conversation(
-        reachy: ReachyMini,
-        client: AsyncOpenAI):
+def _get_session_config(mode: ConversationMode) -> RealtimeSessionCreateRequestParam:
     """
-    Main conversation coroutine, receives voice in real time and generates
-    either robot responses or voice output.
-
-    Args:
-        reachy: The robot instance
-        client: Asynchronous OpenAI client for realtime conversations
+    Gets the OpenAI session configuration
     """
-    mic_rate = reachy.media.get_input_audio_samplerate()
-    stop_event = asyncio.Event()
-
-    last_user_activity_time = asyncio.get_event_loop().time()
-
-    logger.info("Connecting to OpenAI...")
-    async with client.realtime.connect(model="gpt-4o-realtime-preview") as conn:
-        # Configure session for realtime conversation
-        session_config = RealtimeSessionCreateRequestParam(
+    if mode == ConversationMode.BEBOOP:
+        return RealtimeSessionCreateRequestParam(
             type="realtime",
             output_modalities=["text"],
             model="gpt-4o-transcribe",
@@ -232,8 +192,8 @@ async def conversation(
             audio=RealtimeAudioConfigParam(
                 input=RealtimeAudioConfigInputParam(
                     format=AudioPCM(
-                        type = "audio/pcm",
-                        rate = 24000
+                        type="audio/pcm",
+                        rate=24000
                     ),
                     transcription=AudioTranscriptionParam(
                         model="gpt-4o-transcribe",
@@ -243,6 +203,58 @@ async def conversation(
                 ),
             ),
         )
+    elif mode == ConversationMode.VOICE:
+        return RealtimeSessionCreateRequestParam(
+            type="realtime",
+            output_modalities=["text"],
+            model="gpt-4o-transcribe",
+            instructions=BEBOOP_PROMPT,
+            tool_choice="auto",
+            tools=TOOLS,
+            audio=RealtimeAudioConfigParam(
+                input=RealtimeAudioConfigInputParam(
+                    format=AudioPCM(
+                        type="audio/pcm",
+                        rate=24000
+                    ),
+                    transcription=AudioTranscriptionParam(
+                        model="gpt-4o-transcribe",
+                        language="en"),
+                    turn_detection=ServerVad(type="server_vad")
+
+                ),
+            ),
+        )
+    else:
+        raise ValueError(f"Invalid voice mode {str(mode)} received")
+
+
+async def run_conversation(
+        reachy: ReachyMini,
+        client: AsyncOpenAI,
+        mode: ConversationMode) -> ConversationMode | None:
+    """
+    Main conversation coroutine, receives voice in real time and generates
+    either robot responses or voice output.
+
+    Args:
+        reachy: The robot instance
+        client: Asynchronous OpenAI client for realtime conversations
+        mode: The conversation mode to use
+
+    Returns:
+        mode_to_set: If provided, then conversation should be restarted in
+            the associated mode.
+    """
+    mic_rate = reachy.media.get_input_audio_samplerate()
+    stop_event = asyncio.Event()
+
+    last_user_activity_time = asyncio.get_event_loop().time()
+
+    logger.info(f"Starting new conversation in {str(mode)}")
+    async with client.realtime.connect(model="gpt-4o-realtime-preview") as conn:
+        # Configure session for realtime conversation
+        session_config = _get_session_config(mode)
         await conn.session.update(session=session_config)
 
         async def idle_watchdog():
@@ -332,9 +344,14 @@ async def conversation(
                                 await conn.close()
                                 return
                             elif tool_name == "change_conversation_mode":
-                                mode = json.loads(output.arguments)["mode"]
-                                logger.info(f"Tool call: change_conversation_mode to {mode}")
-                                CONV_MODE = mode
+                                new_mode = ConversationMode(json.loads(output.arguments)["mode"])
+                                logger.info(f"Tool call: change_conversation_mode to {str(new_mode)}")
+                                if new_mode != mode:
+                                    logger.info(f"New Mode {str(new_mode)} differs from {str(mode)}, switching")
+                                    # Finish conversation to avoid issues with partial responses
+                                    stop_event.set()
+                                    await conn.close()
+                                    return new_mode
                             elif tool_name == "set_light_state":
                                 logger.info("Tool call: set_light_state state received")
                                 args = json.loads(output.arguments or "{}")
@@ -348,7 +365,7 @@ async def conversation(
                                     # Generally stop after first light command
                                     stop_event.set()
                                     await conn.close()
-                                    return
+                                    return None
                             elif tool_name == "show_emotion":
                                 logger.info(f"Tool call: show_emotion for {output.arguments}")
                                 try:
@@ -368,17 +385,55 @@ async def conversation(
 
         logger.info("Conversation Started... (Ctrl+C to stop)")
         watchdog_task = asyncio.create_task(idle_watchdog())
+        new_mode = None
         try:
             # Run both loops concurrently
-            await asyncio.gather(send_audio(), receive_events(), watchdog_task)
+            _, new_mode, _ = await asyncio.gather(send_audio(), receive_events(), watchdog_task)
         finally:
             stop_event.set()
             watchdog_task.cancel()
-            reachy.goto_sleep()
+            if new_mode is None:
+                reachy.goto_sleep()
             try:
                 await watchdog_task
             except asyncio.CancelledError:
                 pass
+        return new_mode
+
+
+def main():
+    """
+    Main conversation App
+    """
+    client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
+    conv_mode = ConversationMode.BEBOOP
+    skip_wakeword = False
+    # Tried starting the daemon here, but it wouldn't work, start it separately
+    with ReachyMini(automatic_body_yaw=True) as reachy:
+        reachy.goto_sleep()
+        while True:
+            reachy.media.start_recording()
+            try:
+                if not skip_wakeword:
+                    _ = _listen_for_wakeword(reachy)
+                    reachy.wake_up()
+                else:
+                    skip_wakeword = False
+
+                new_mode = asyncio.run(run_conversation(reachy, client, conv_mode))
+                if isinstance(new_mode, ConversationMode):
+                    conv_mode = new_mode
+                    skip_wakeword = True
+
+
+            except KeyboardInterrupt:
+                logger.info("Keyboard interrupt received, shutting down")
+                break
+            except ZeroAudioError:
+                logger.error("Exiting due to zero audio samples.")
+                sys.exit(ZERO_AUDIO_EXIT_CODE)
+            finally:
+                reachy.stop_recording()
 
 
 if __name__ == '__main__':
