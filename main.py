@@ -13,7 +13,7 @@ from openai.types.realtime import (
     RealtimeAudioConfigInputParam,
     AudioTranscriptionParam,
     RealtimeToolsConfigParam,
-    RealtimeFunctionToolParam, RealtimeAudioConfigOutputParam
+    RealtimeFunctionToolParam, RealtimeAudioConfigOutputParam, RealtimeResponseCreateParamsParam
 )
 from openai.types.realtime.realtime_audio_formats_param import AudioPCM
 from openai.types.realtime.realtime_audio_input_turn_detection_param import SemanticVad, ServerVad
@@ -53,7 +53,7 @@ class ConversationMode(Enum):
 # Silent Robot
 EMOTION_MOVES = RecordedMoves("pollen-robotics/reachy-mini-emotions-library")
 MOVE_GOTO_DURATION = 0.5
-USER_IDLE_TIMEOUT = 12.0
+USER_IDLE_TIMEOUT = 15.0
 
 # Tools
 TOOLS = []
@@ -117,7 +117,7 @@ def _listen_for_wakeword(reachy: ReachyMini) -> float:
         direction_of_arrival: The direction the sound came from
     """
     mic_rate = reachy.media.get_input_audio_samplerate()
-    frames = 1280 * 5  # OpenWakeWord wants multiples of 1280 samples
+    frames = 1280 * 8  # OpenWakeWord wants multiples of 1280 samples -> longer means more latency
     delay_s = frames / mic_rate
     time.sleep(delay_s)
     doa = 0
@@ -213,6 +213,9 @@ def _get_session_config(mode: ConversationMode) -> RealtimeSessionCreateRequestP
         as express yourself using emotions. If you think an emotion is appropriate, use the relevant
         tool. Don't mention to the user about the tool, think of it as part of your body.
         
+        Generally act friendly, maybe in an almost naive way, as you can talk but you're still a cute
+        little robot (don't explicitly point this out though). 
+        
         You speak english unless specifically asked to do otherwise.
 
         If you're dismissed, or asked to go to sleep, call the "end_conversation" tool.
@@ -278,6 +281,15 @@ async def run_conversation(
         # Configure session for realtime conversation
         session_config = _get_session_config(mode)
         await conn.session.update(session=session_config)
+        
+        # In voice mode want to do a quick greeting
+        if mode == ConversationMode.VOICE:
+            await conn.response.create(
+                response=RealtimeResponseCreateParamsParam(
+                    instructions="Start the conversation with a short friendly greeting"
+                )
+            )
+            last_user_activity_time = asyncio.get_event_loop().time()
 
         async def idle_watchdog():
             """Stop the conversation if no user activity occurs for a while."""

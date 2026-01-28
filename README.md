@@ -2,8 +2,8 @@
 This is a small project to explore the Reachy Mini robot.
 
 To Do:
- - Trigger Voice ConversationL
-   - See conversation app, openai_realtime ~360. Need to get each delta and put it in a queue for the robot to emit
+ - Keep track of history and provide between conversations
+ - (code) Clean up async handling - it's brittle now, should use a main coroutine "receive events" and have it cancel the others
 
 Other Ideas:
  - Make it possible to cancel emotion moves
