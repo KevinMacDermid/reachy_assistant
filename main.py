@@ -277,7 +277,7 @@ async def run_conversation(
     speaker_queue: "asyncio.Queue[NDArray[np.int16]]" = asyncio.Queue()
     stop_event = asyncio.Event()
 
-    last_user_activity_time = asyncio.get_event_loop().time()
+    last_activity_time = asyncio.get_event_loop().time()
 
     logger.info(f"Starting new conversation in {str(mode)}")
     async with client.realtime.connect(model="gpt-4o-realtime-preview") as conn:
@@ -289,22 +289,21 @@ async def run_conversation(
         if mode == ConversationMode.VOICE:
             await conn.response.create(
                 response=RealtimeResponseCreateParamsParam(
-                    instructions="Start the conversation with a short friendly greeting"
+                    instructions="Start the conversation with a short friendly greeting in english"
                 )
             )
-            last_user_activity_time = asyncio.get_event_loop().time()
 
         async def idle_watchdog():
             """Stop the conversation if no user activity occurs for a while."""
-            nonlocal last_user_activity_time
+            nonlocal last_activity_time
             try:
                 while not stop_event.is_set():
                     await asyncio.sleep(0.25)
                     now = asyncio.get_event_loop().time()
-                    if (now - last_user_activity_time) >= USER_IDLE_TIMEOUT:
+                    if (now - last_activity_time) >= USER_IDLE_TIMEOUT:
                         logger.info(
                             "User idle for %.1fs (>= %.1fs). Timing out conversation.",
-                            (now - last_user_activity_time),
+                            (now - last_activity_time),
                             USER_IDLE_TIMEOUT,
                         )
                         speaker_queue.put_nowait(None)
@@ -353,7 +352,7 @@ async def run_conversation(
 
         async def send_audio_speaker():
             """Outputs the audio from the conversation"""
-            nonlocal  last_user_activity_time
+            nonlocal  last_activity_time
             while True:
                 if stop_event.is_set():
                     return None
@@ -362,7 +361,7 @@ async def run_conversation(
                 if output is None:
                     return None
                 
-                last_user_activity_time = asyncio.get_event_loop().time() 
+                last_activity_time = asyncio.get_event_loop().time()
                 # Scale to float32 in range -1 to 1
                 output = (output / np.iinfo(np.int16).max).astype(np.float32, copy=False)
                 output = np.clip(output, -1.0, 1.0)
@@ -376,44 +375,35 @@ async def run_conversation(
 
         async def receive_events():
             """Listen for transcription events."""
-            nonlocal last_user_activity_time
+            nonlocal last_activity_time
             async for event in conn:
+                # Any event stops the watchdog from triggering
+                last_activity_time = asyncio.get_event_loop().time()
+
                 if event.type == "error":
                     logger.error(f"\nError: {str(event.error)}")
-
                 # Input audio transcripts
                 elif event.type == "conversation.item.input_audio_transcription.partial":
-                    last_user_activity_time = asyncio.get_event_loop().time()
                     logger.debug(f"Partial: {event.transcript}")
 
                 elif event.type == "conversation.item.input_audio_transcription.completed":
-                    last_user_activity_time = asyncio.get_event_loop().time()
                     logger.info(f"\nUser: {event.transcript}")
 
                 # Text mode output
                 elif event.type == "response.output_text.done":
-                    last_user_activity_time = asyncio.get_event_loop().time()
                     logger.info(f"Model: {event.text}")
 
                 # Voice Audio events
                 elif event.type in ("response.audio.delta", "response.output_audio.delta"):
-                    last_user_activity_time = asyncio.get_event_loop().time()
                     output = np.frombuffer(base64.b64decode(event.delta), dtype=np.int16).reshape(-1, 1)
                     await speaker_queue.put(output)
 
                 # Voice text transcripts
                 elif event.type == "response.output_audio_transcript.done":
-                    last_user_activity_time = asyncio.get_event_loop().time()
                     logger.info(f"Model: {event.transcript}")
-
-                elif event.type in ("conversation.item.input_audio_transcription.delta",
-                                    "response.output_audio_transcript.delta"):
-                    # Trying to avoid watchdog triggering mid conversation
-                    last_user_activity_time = asyncio.get_event_loop().time()
 
                 # Function Calls
                 elif event.type == "response.done":
-                    last_user_activity_time = asyncio.get_event_loop().time()
                     if len(event.response.output) > 0:
                         output = event.response.output[0]
                         if output.type == "function_call":
@@ -466,7 +456,7 @@ async def run_conversation(
                             else:
                                 logger.error(f"Unrecognized tool received. Name = {tool_name}")
                 else:
-                    logger.info(f"Got unhandled event {str(event.type)}", )
+                    logger.debug(f"Got unhandled event {str(event.type)}", )
 
         logger.info("Conversation Started... (Ctrl+C to stop)")
         watchdog_task = asyncio.create_task(idle_watchdog())
