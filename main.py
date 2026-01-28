@@ -53,7 +53,7 @@ class ConversationMode(Enum):
 # Silent Robot
 EMOTION_MOVES = RecordedMoves("pollen-robotics/reachy-mini-emotions-library")
 MOVE_GOTO_DURATION = 0.5
-USER_IDLE_TIMEOUT = 15.0
+USER_IDLE_TIMEOUT = 30.0
 
 # Tools
 TOOLS = []
@@ -318,9 +318,12 @@ async def run_conversation(
 
         async def send_audio_openai():
             """Continuously poll mic and send to OpenAI."""
+            nonlocal last_activity_time
             try:
                 while not stop_event.is_set():
                     chunk = reachy.media.get_audio_sample()
+                    last_activity_time = asyncio.get_event_loop().time()
+
                     if chunk is None:
                         await asyncio.sleep(0.1)
                         continue
