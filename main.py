@@ -184,6 +184,9 @@ def _get_session_config(mode: ConversationMode) -> RealtimeSessionCreateRequestP
         instead of a response every time.
 
         If you're dismissed, or asked to go to sleep, call the "end_conversation" tool.
+        
+        If there's a request about the conversation (other than ending it), then you should trigger change conversation
+        mode to voice.
         """
         return RealtimeSessionCreateRequestParam(
             type="realtime",
@@ -199,7 +202,7 @@ def _get_session_config(mode: ConversationMode) -> RealtimeSessionCreateRequestP
                         rate=24000
                     ),
                     transcription=AudioTranscriptionParam(
-                        model="gpt-4o-transcribe",
+                        model=OPENAI_TRANSCRIPTION_MODEL,
                         language="en"),
                     turn_detection=ServerVad(type="server_vad")
 
@@ -210,8 +213,8 @@ def _get_session_config(mode: ConversationMode) -> RealtimeSessionCreateRequestP
         voice_prompt = f"""
         You are a helpful little robot with just a head, no arms and legs. You're actually a 
         reachy-mini robot from HuggingFace with the name Marvin. You can talk, as well 
-        as express yourself using emotions. If you think an emotion is appropriate, use the relevant
-        tool. Don't mention to the user about the tool, think of it as part of your body.
+        as express yourself using the emotion too. Try to use emotions pretty often, alongside your
+        responses. 
         
         Generally act friendly, maybe in an almost naive way, as you can talk but you're still a cute
         little robot (don't explicitly point this out though). 
@@ -236,7 +239,7 @@ def _get_session_config(mode: ConversationMode) -> RealtimeSessionCreateRequestP
                         rate=24000
                     ),
                     transcription=AudioTranscriptionParam(
-                        model="gpt-4o-transcribe",
+                        model=OPENAI_TRANSCRIPTION_MODEL,
                         language="en"),
                     turn_detection=ServerVad(type="server_vad")
                 ),
