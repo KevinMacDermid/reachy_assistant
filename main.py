@@ -13,7 +13,7 @@ from openai.types.realtime import (
     RealtimeAudioConfigInputParam,
     AudioTranscriptionParam,
     RealtimeToolsConfigParam,
-    RealtimeFunctionToolParam
+    RealtimeFunctionToolParam, RealtimeAudioConfigOutputParam
 )
 from openai.types.realtime.realtime_audio_formats_param import AudioPCM
 from openai.types.realtime.realtime_audio_input_turn_detection_param import SemanticVad, ServerVad
@@ -36,7 +36,7 @@ class ZeroAudioError(RuntimeError):
 
 
 # Wake model
-TARGET_SAMPLE_RATE = 24000
+OPENAI_SAMPLE_RATE = 24000  # OpenAI real time conversations only support this sample rate
 WAKE_MODEL_NAME = "hey_marvin"
 WAKE_MODEL = Model(
         wakeword_model_paths=[os.path.join(os.path.dirname(__file__), "models", f"{WAKE_MODEL_NAME}.onnx")]
@@ -49,16 +49,6 @@ class ConversationMode(Enum):
 
 # Silent Robot
 EMOTION_MOVES = RecordedMoves("pollen-robotics/reachy-mini-emotions-library")
-BEBOOP_PROMPT = f"""
-You are a helpful little robot with just a head, no arms and legs. You're actually a 
-reachy-mini robot from HuggingFace with the name Marvin.
-
-You can't talk, so you will need to pick tools for displaying emotions or performing actions.
-You can provide a response providing a very brief explanation for your tool choice. Generally pick an emotion
-instead of a response every time.
-
-If you're dismissed, or asked to go to sleep, call the "end_conversation" tool.
-"""
 MOVE_GOTO_DURATION = 0.5
 USER_IDLE_TIMEOUT = 12.0
 
@@ -182,11 +172,21 @@ def _get_session_config(mode: ConversationMode) -> RealtimeSessionCreateRequestP
     Gets the OpenAI session configuration
     """
     if mode == ConversationMode.BEBOOP:
+        beboop_prompt = f"""
+        You are a helpful little robot with just a head, no arms and legs. You're actually a 
+        reachy-mini robot from HuggingFace with the name Marvin.
+
+        You can't talk, so you will need to pick tools for displaying emotions or performing actions.
+        You can provide a response providing a very brief explanation for your tool choice. Generally pick an emotion
+        instead of a response every time.
+
+        If you're dismissed, or asked to go to sleep, call the "end_conversation" tool.
+        """
         return RealtimeSessionCreateRequestParam(
             type="realtime",
             output_modalities=["text"],
             model="gpt-4o-transcribe",
-            instructions=BEBOOP_PROMPT,
+            instructions=beboop_prompt,
             tool_choice="auto",
             tools=TOOLS,
             audio=RealtimeAudioConfigParam(
@@ -204,11 +204,21 @@ def _get_session_config(mode: ConversationMode) -> RealtimeSessionCreateRequestP
             ),
         )
     elif mode == ConversationMode.VOICE:
+        voice_prompt = f"""
+        You are a helpful little robot with just a head, no arms and legs. You're actually a 
+        reachy-mini robot from HuggingFace with the name Marvin.
+
+        You can talk, as well as use tools to express yourself, like emotions, and take basic assistant actions.
+        
+        You speak english unless specifically asked to do otherwise.
+
+        If you're dismissed, or asked to go to sleep, call the "end_conversation" tool.
+        """
         return RealtimeSessionCreateRequestParam(
             type="realtime",
-            output_modalities=["text"],
+            output_modalities=["audio"],
             model="gpt-4o-transcribe",
-            instructions=BEBOOP_PROMPT,
+            instructions=voice_prompt,
             tool_choice="auto",
             tools=TOOLS,
             audio=RealtimeAudioConfigParam(
@@ -221,8 +231,13 @@ def _get_session_config(mode: ConversationMode) -> RealtimeSessionCreateRequestP
                         model="gpt-4o-transcribe",
                         language="en"),
                     turn_detection=ServerVad(type="server_vad")
-
                 ),
+                output=RealtimeAudioConfigOutputParam(
+                    format=AudioPCM(
+                        type="audio/pcm",
+                        rate=24000),
+                    voice="sage"
+                )
             ),
         )
     else:
@@ -247,6 +262,8 @@ async def run_conversation(
             the associated mode.
     """
     mic_rate = reachy.media.get_input_audio_samplerate()
+    speaker_rate = reachy.media.get_output_audio_samplerate()
+    speaker_queue: "asyncio.Queue[NDArray[np.int16]]" = asyncio.Queue()
     stop_event = asyncio.Event()
 
     last_user_activity_time = asyncio.get_event_loop().time()
@@ -279,7 +296,7 @@ async def run_conversation(
             except asyncio.CancelledError:
                 raise
 
-        async def send_audio():
+        async def send_audio_openai():
             """Continuously poll mic and send to OpenAI."""
             try:
                 while not stop_event.is_set():
@@ -293,8 +310,8 @@ async def run_conversation(
                         chunk = chunk[:, 0]
 
                     # Resample to 24kHz if necessary
-                    if mic_rate != TARGET_SAMPLE_RATE:
-                        num_samples = int(len(chunk) * TARGET_SAMPLE_RATE / mic_rate)
+                    if mic_rate != OPENAI_SAMPLE_RATE:
+                        num_samples = int(len(chunk) * OPENAI_SAMPLE_RATE / mic_rate)
                         chunk = resample(chunk, num_samples)
 
                     # Scale to int16
@@ -313,10 +330,24 @@ async def run_conversation(
             except Exception as e:
                 logger.error(f"Error sending audio: {e}")
 
+        async def send_audio_speaker():
+            "Outputs the audio from the conversation"
+            while True:
+                output =  await speaker_queue.get()
+                # Scale to float32 in range -1 to 1
+                output = (output / np.iinfo(np.int16).max).astype(np.float32, copy=False)
+                output = np.clip(output, -1.0, 1.0)
+
+                # Resample to 24kHz if necessary
+                if speaker_rate != OPENAI_SAMPLE_RATE:
+                    num_samples = int(len(output) * speaker_rate/ OPENAI_SAMPLE_RATE)
+                    output = resample(output, num_samples)
+                reachy.media.push_audio_sample(output)
+
+
         async def receive_events():
             """Listen for transcription events."""
             nonlocal last_user_activity_time
-            global CONV_MODE
             async for event in conn:
                 if event.type == "conversation.item.input_audio_transcription.partial":
                     last_user_activity_time = asyncio.get_event_loop().time()
@@ -332,6 +363,11 @@ async def run_conversation(
                 elif event.type == "response.output_text.done":
                     logger.info(f"Model: {event.text}")
 
+                elif event.type in ("response.audio.delta", "response.output_audio.delta"):
+                    last_user_activity_time = asyncio.get_event_loop().time()
+                    output = np.frombuffer(base64.b64decode(event.delta), dtype=np.int16).reshape(-1, 1)
+                    await speaker_queue.put(output)
+
                 elif event.type == "response.done":
                     last_user_activity_time = asyncio.get_event_loop().time()
                     if len(event.response.output) > 0:
@@ -342,16 +378,16 @@ async def run_conversation(
                                 logger.info("Tool call: end_conversation → stopping conversation loop.")
                                 stop_event.set()
                                 await conn.close()
-                                return
+                                return None
                             elif tool_name == "change_conversation_mode":
-                                new_mode = ConversationMode(json.loads(output.arguments)["mode"])
-                                logger.info(f"Tool call: change_conversation_mode to {str(new_mode)}")
-                                if new_mode != mode:
-                                    logger.info(f"New Mode {str(new_mode)} differs from {str(mode)}, switching")
+                                new_mode_req = ConversationMode(json.loads(output.arguments)["mode"])
+                                logger.info(f"Tool call: change_conversation_mode to {str(new_mode_req)}")
+                                if new_mode_req != mode:
+                                    logger.info(f"New Mode {str(new_mode_req)} differs from {str(mode)}, switching")
                                     # Finish conversation to avoid issues with partial responses
                                     stop_event.set()
                                     await conn.close()
-                                    return new_mode
+                                    return new_mode_req
                             elif tool_name == "set_light_state":
                                 logger.info("Tool call: set_light_state state received")
                                 args = json.loads(output.arguments or "{}")
@@ -387,8 +423,11 @@ async def run_conversation(
         watchdog_task = asyncio.create_task(idle_watchdog())
         new_mode = None
         try:
-            # Run both loops concurrently
-            _, new_mode, _ = await asyncio.gather(send_audio(), receive_events(), watchdog_task)
+            _, _, new_mode, _ = await asyncio.gather(
+                send_audio_openai(),
+                send_audio_speaker(),
+                receive_events(),
+                watchdog_task)
         finally:
             stop_event.set()
             watchdog_task.cancel()
@@ -406,13 +445,14 @@ def main():
     Main conversation App
     """
     client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
-    conv_mode = ConversationMode.BEBOOP
+    conv_mode = ConversationMode.VOICE
     skip_wakeword = False
     # Tried starting the daemon here, but it wouldn't work, start it separately
     with ReachyMini(automatic_body_yaw=True) as reachy:
         reachy.goto_sleep()
         while True:
             reachy.media.start_recording()
+            reachy.media.start_playing()
             try:
                 if not skip_wakeword:
                     _ = _listen_for_wakeword(reachy)
@@ -434,6 +474,7 @@ def main():
                 sys.exit(ZERO_AUDIO_EXIT_CODE)
             finally:
                 reachy.stop_recording()
+                reachy.media.stop_playing()
 
 
 if __name__ == '__main__':
