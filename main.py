@@ -37,6 +37,9 @@ class ZeroAudioError(RuntimeError):
 
 # Wake model
 OPENAI_SAMPLE_RATE = 24000  # OpenAI real time conversations only support this sample rate
+OPENAI_TRANSCRIPTION_MODEL = "gpt-4o-mini-transcribe-2025-12-15"
+OPENAI_VOICE = "cedar"
+
 WAKE_MODEL_NAME = "hey_marvin"
 WAKE_MODEL = Model(
         wakeword_model_paths=[os.path.join(os.path.dirname(__file__), "models", f"{WAKE_MODEL_NAME}.onnx")]
@@ -185,7 +188,7 @@ def _get_session_config(mode: ConversationMode) -> RealtimeSessionCreateRequestP
         return RealtimeSessionCreateRequestParam(
             type="realtime",
             output_modalities=["text"],
-            model="gpt-4o-transcribe",
+            model=OPENAI_TRANSCRIPTION_MODEL,
             instructions=beboop_prompt,
             tool_choice="auto",
             tools=TOOLS,
@@ -206,18 +209,20 @@ def _get_session_config(mode: ConversationMode) -> RealtimeSessionCreateRequestP
     elif mode == ConversationMode.VOICE:
         voice_prompt = f"""
         You are a helpful little robot with just a head, no arms and legs. You're actually a 
-        reachy-mini robot from HuggingFace with the name Marvin.
-
-        You can talk, as well as use tools to express yourself, like emotions, and take basic assistant actions.
+        reachy-mini robot from HuggingFace with the name Marvin. You can talk, as well 
+        as express yourself using emotions. If you think an emotion is appropriate, use the relevant
+        tool. Don't mention to the user about the tool, think of it as part of your body.
         
         You speak english unless specifically asked to do otherwise.
 
         If you're dismissed, or asked to go to sleep, call the "end_conversation" tool.
+        If you are asked something about changing conversation modes, it's probably to switch to BEBOOP mode,
+        unless you are clearly instructed otherwise.
         """
         return RealtimeSessionCreateRequestParam(
             type="realtime",
             output_modalities=["audio"],
-            model="gpt-4o-transcribe",
+            model=OPENAI_TRANSCRIPTION_MODEL,
             instructions=voice_prompt,
             tool_choice="auto",
             tools=TOOLS,
@@ -236,7 +241,7 @@ def _get_session_config(mode: ConversationMode) -> RealtimeSessionCreateRequestP
                     format=AudioPCM(
                         type="audio/pcm",
                         rate=24000),
-                    voice="sage"
+                    voice=OPENAI_VOICE
                 )
             ),
         )
@@ -287,6 +292,7 @@ async def run_conversation(
                             (now - last_user_activity_time),
                             USER_IDLE_TIMEOUT,
                         )
+                        speaker_queue.put_nowait(None)
                         stop_event.set()
                         try:
                             await conn.close()
@@ -331,7 +337,8 @@ async def run_conversation(
                 logger.error(f"Error sending audio: {e}")
 
         async def send_audio_speaker():
-            "Outputs the audio from the conversation"
+            """Outputs the audio from the conversation"""
+            nonlocal  last_user_activity_time
             while True:
                 if stop_event.is_set():
                     return None
@@ -339,6 +346,8 @@ async def run_conversation(
                 # Use None as indication to stop listening (sentinel value)
                 if output is None:
                     return None
+                
+                last_user_activity_time = asyncio.get_event_loop().time() 
                 # Scale to float32 in range -1 to 1
                 output = (output / np.iinfo(np.int16).max).astype(np.float32, copy=False)
                 output = np.clip(output, -1.0, 1.0)
