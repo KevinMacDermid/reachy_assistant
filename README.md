@@ -12,12 +12,9 @@ Other Ideas:
  - Link / embed some of the existing apps (20 questions, hand tracking)
 
 ## Wake Word
-Working on this - need to find and run some existing voice model
+Using OpenWakeWord models, here's a Reachy specific one someone trained
 https://huggingface.co/spaces/luisomoreau/hey_reachy_wake_word_detection
 
-## Conversation
-Looks like they have conversation with face tracking already
-https://huggingface.co/spaces/pollen-robotics/reachy_mini_conversation_app/tree/main/src/reachy_mini_conversation_app
 
 # Installation
 ## Install PortAudio
@@ -60,13 +57,14 @@ without sudo privileges. See `visudo`
 Need to run the daemon and the application, with a watchdog that waits for the "audio samples are all 0" issue
 and then restarts USB hub.
 
-**Session needs sudo privileges**
+Note: Script for restarting interal hub had to be added as allowed in `visudo`, this is done on Frisket.
 ```bash
 uv run python run_reachy_supervisor.py
 ```
 
-
 # Issues
+## Low Audio
+This is controlled by OS, can adjust with `alsamixer` for example.
 
 ## Audio - All samples are 0.0
 Sometimes have trouble getting audio from the robot, not sure the problem yet,

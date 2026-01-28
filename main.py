@@ -333,7 +333,12 @@ async def run_conversation(
         async def send_audio_speaker():
             "Outputs the audio from the conversation"
             while True:
+                if stop_event.is_set():
+                    return None
                 output =  await speaker_queue.get()
+                # Use None as indication to stop listening (sentinel value)
+                if output is None:
+                    return None
                 # Scale to float32 in range -1 to 1
                 output = (output / np.iinfo(np.int16).max).astype(np.float32, copy=False)
                 output = np.clip(output, -1.0, 1.0)
@@ -377,6 +382,7 @@ async def run_conversation(
                             if tool_name == "end_conversation":
                                 logger.info("Tool call: end_conversation → stopping conversation loop.")
                                 stop_event.set()
+                                speaker_queue.put_nowait(None)
                                 await conn.close()
                                 return None
                             elif tool_name == "change_conversation_mode":
@@ -386,6 +392,7 @@ async def run_conversation(
                                     logger.info(f"New Mode {str(new_mode_req)} differs from {str(mode)}, switching")
                                     # Finish conversation to avoid issues with partial responses
                                     stop_event.set()
+                                    speaker_queue.put_nowait(None)
                                     await conn.close()
                                     return new_mode_req
                             elif tool_name == "set_light_state":
@@ -400,6 +407,7 @@ async def run_conversation(
                                                                  initial_goto_duration=MOVE_GOTO_DURATION)
                                     # Generally stop after first light command
                                     stop_event.set()
+                                    speaker_queue.put_nowait(None)
                                     await conn.close()
                                     return None
                             elif tool_name == "show_emotion":
@@ -422,6 +430,7 @@ async def run_conversation(
         logger.info("Conversation Started... (Ctrl+C to stop)")
         watchdog_task = asyncio.create_task(idle_watchdog())
         new_mode = None
+        # ToDo: Change this to only wait on receive_events(), all others get cancelled when it completes
         try:
             _, _, new_mode, _ = await asyncio.gather(
                 send_audio_openai(),
@@ -430,6 +439,7 @@ async def run_conversation(
                 watchdog_task)
         finally:
             stop_event.set()
+            speaker_queue.put_nowait(None)
             watchdog_task.cancel()
             if new_mode is None:
                 reachy.goto_sleep()
@@ -445,7 +455,7 @@ def main():
     Main conversation App
     """
     client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
-    conv_mode = ConversationMode.VOICE
+    conv_mode = ConversationMode.BEBOOP
     skip_wakeword = False
     # Tried starting the daemon here, but it wouldn't work, start it separately
     with ReachyMini(automatic_body_yaw=True) as reachy:
