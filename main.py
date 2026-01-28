@@ -204,7 +204,7 @@ def _get_session_config(mode: ConversationMode) -> RealtimeSessionCreateRequestP
                     transcription=AudioTranscriptionParam(
                         model=OPENAI_TRANSCRIPTION_MODEL,
                         language="en"),
-                    turn_detection=ServerVad(type="server_vad")
+                    turn_detection=SemanticVad(type="semantic_vad", eagerness="low")
 
                 ),
             ),
@@ -241,7 +241,7 @@ def _get_session_config(mode: ConversationMode) -> RealtimeSessionCreateRequestP
                     transcription=AudioTranscriptionParam(
                         model=OPENAI_TRANSCRIPTION_MODEL,
                         language="en"),
-                    turn_detection=ServerVad(type="server_vad")
+                    turn_detection=SemanticVad(type="semantic_vad", eagerness="low")
                 ),
                 output=RealtimeAudioConfigOutputParam(
                     format=AudioPCM(
@@ -378,7 +378,11 @@ async def run_conversation(
             """Listen for transcription events."""
             nonlocal last_user_activity_time
             async for event in conn:
-                if event.type == "conversation.item.input_audio_transcription.partial":
+                if event.type == "error":
+                    logger.error(f"\nError: {str(event.error)}")
+
+                # Input audio transcripts
+                elif event.type == "conversation.item.input_audio_transcription.partial":
                     last_user_activity_time = asyncio.get_event_loop().time()
                     logger.debug(f"Partial: {event.transcript}")
 
@@ -386,17 +390,28 @@ async def run_conversation(
                     last_user_activity_time = asyncio.get_event_loop().time()
                     logger.info(f"\nUser: {event.transcript}")
 
-                elif event.type == "error":
-                    logger.error(f"\nError: {str(event.error)}")
-
+                # Text mode output
                 elif event.type == "response.output_text.done":
+                    last_user_activity_time = asyncio.get_event_loop().time()
                     logger.info(f"Model: {event.text}")
 
+                # Voice Audio events
                 elif event.type in ("response.audio.delta", "response.output_audio.delta"):
                     last_user_activity_time = asyncio.get_event_loop().time()
                     output = np.frombuffer(base64.b64decode(event.delta), dtype=np.int16).reshape(-1, 1)
                     await speaker_queue.put(output)
 
+                # Voice text transcripts
+                elif event.type == "response.output_audio_transcript.done":
+                    last_user_activity_time = asyncio.get_event_loop().time()
+                    logger.info(f"Model: {event.transcript}")
+
+                elif event.type in ("conversation.item.input_audio_transcription.delta",
+                                    "response.output_audio_transcript.delta"):
+                    # Trying to avoid watchdog triggering mid conversation
+                    last_user_activity_time = asyncio.get_event_loop().time()
+
+                # Function Calls
                 elif event.type == "response.done":
                     last_user_activity_time = asyncio.get_event_loop().time()
                     if len(event.response.output) > 0:
@@ -450,6 +465,8 @@ async def run_conversation(
                                                                  initial_goto_duration=MOVE_GOTO_DURATION)
                             else:
                                 logger.error(f"Unrecognized tool received. Name = {tool_name}")
+                else:
+                    logger.info(f"Got unhandled event {str(event.type)}", )
 
         logger.info("Conversation Started... (Ctrl+C to stop)")
         watchdog_task = asyncio.create_task(idle_watchdog())
