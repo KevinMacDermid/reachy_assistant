@@ -1,11 +1,14 @@
-import json
-from reachy_mini.motion.recorded_move import RecordedMoves
-from dotenv import load_dotenv
 import asyncio
 import base64
+import json
+import logging
 import os
-import numpy as np
 import sys
+import time
+from enum import Enum
+
+import numpy as np
+from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from openai.types.realtime import (
     RealtimeSessionCreateRequestParam,
@@ -17,15 +20,14 @@ from openai.types.realtime import (
     RealtimeResponseCreateParamsParam
 )
 from openai.types.realtime.realtime_audio_formats_param import AudioPCM
-from openai.types.realtime.realtime_audio_input_turn_detection_param import SemanticVad, ServerVad
-from reachy_mini import ReachyMini
-from scipy.signal import resample
+from openai.types.realtime.realtime_audio_input_turn_detection_param import SemanticVad
 from openwakeword.model import Model
-import logging
-import time
-from tools.lights import LIGHTS_MCP, LightState, set_light_state
+from reachy_mini import ReachyMini
+from reachy_mini.motion.recorded_move import RecordedMoves
+from scipy.signal import resample
+
 from tools.emotions import EMOTIONS_MCP
-from enum import Enum
+from tools.lights import LIGHTS_MCP, LightState, set_light_state
 
 _ = load_dotenv()
 logger = logging.getLogger(__name__)
