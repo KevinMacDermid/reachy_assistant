@@ -23,7 +23,6 @@ from scipy.signal import resample
 from openwakeword.model import Model
 import logging
 import time
-import librosa
 from tools.lights import LIGHTS_MCP, LightState, set_light_state
 from tools.emotions import EMOTIONS_MCP
 from enum import Enum
@@ -37,76 +36,10 @@ class ZeroAudioError(RuntimeError):
     pass
 
 
-class StatefulVoiceProcessor:
-    """Stateful audio processor for cute/friendly voice effect without blips between chunks."""
-
-    def __init__(self, sample_rate: int, pitch_shift_semitones: float, speed_rate: float, gain: float):
-        self.sample_rate = sample_rate
-        self.pitch_shift_semitones = pitch_shift_semitones
-        self.speed_rate = speed_rate
-        self.gain = gain
-        self.buffer = np.array([], dtype=np.float32)
-        self.hop_length = 512
-        self.n_fft = 2048
-
-    def process_chunk(self, chunk: np.ndarray) -> np.ndarray:
-        """
-        Process an audio chunk with pitch shift and speed adjustment.
-        Maintains state to avoid blips between chunks.
-        """
-        # Append new chunk to buffer
-        self.buffer = np.concatenate([self.buffer, chunk.flatten().astype(np.float32)])
-
-        # Need enough samples to process (at least n_fft + hop_length)
-        min_samples = self.n_fft + self.hop_length * 2
-        if len(self.buffer) < min_samples:
-            return np.array([], dtype=np.float32)
-
-        # Process the buffer
-        # Apply pitch shift using librosa
-        pitch_shifted = librosa.effects.pitch_shift(
-            self.buffer,
-            sr=self.sample_rate,
-            n_steps=self.pitch_shift_semitones,
-            hop_length=self.hop_length,
-            n_fft=self.n_fft
-        )
-
-        # Apply speed change (time stretch inverse of speed)
-        processed = librosa.effects.time_stretch(
-            pitch_shifted,
-            rate=self.speed_rate,
-            hop_length=self.hop_length,
-            n_fft=self.n_fft
-        )
-
-        # Calculate how much to output (leave some in buffer for continuity)
-        output_length = len(processed) - self.hop_length
-        if output_length <= 0:
-            return np.array([], dtype=np.float32)
-
-        output = processed[:output_length]
-
-        # Apply gain compensation to restore amplitude
-        output = output * self.gain
-        output = np.clip(output, -1.0, 1.0)
-
-        # Keep remaining samples in buffer with overlap for smooth transitions
-        consumed_input = int(output_length / self.speed_rate)
-        self.buffer = self.buffer[consumed_input:]
-
-        return output
-
-
 # Wake model
 OPENAI_SAMPLE_RATE = 24000  # OpenAI real time conversations only support this sample rate
 OPENAI_TRANSCRIPTION_MODEL = "gpt-4o-mini-transcribe-2025-12-15"
-
-# Voice processing
-PITCH_SHIFT_SEMITONES = 6  # Raise pitch for cute/friendly voice
-VOICE_SPEED_RATE = 1.10  # Slightly faster for more energetic feel
 OPENAI_VOICE = "cedar"
-VOICE_GAIN = 1.3
 
 WAKE_MODEL_NAME = "hey_marvin"
 WAKE_MODEL = Model(
@@ -347,16 +280,6 @@ async def run_conversation(
 
     last_activity_time = asyncio.get_event_loop().time()
 
-    # Initialize voice processor for cute/friendly voice (only in voice mode)
-    voice_processor = None
-    if mode == ConversationMode.VOICE:
-        voice_processor = StatefulVoiceProcessor(
-            sample_rate=OPENAI_SAMPLE_RATE,
-            pitch_shift_semitones=PITCH_SHIFT_SEMITONES,
-            speed_rate=VOICE_SPEED_RATE,
-            gain=VOICE_GAIN
-        )
-
     logger.info(f"Starting new conversation in {str(mode)}")
     async with client.realtime.connect(model="gpt-4o-realtime-preview") as conn:
         # Configure session for realtime conversation
@@ -438,23 +361,16 @@ async def run_conversation(
                 if stop_event.is_set():
                     return None
                 output =  await speaker_queue.get()
-                # Use None as indication to stop listening (sentinel value)
+                # Use None as an indication to stop listening (sentinel value)
                 if output is None:
                     return None
-
+                
                 last_activity_time = asyncio.get_event_loop().time()
                 # Scale to float32 in range -1 to 1
                 output = (output / np.iinfo(np.int16).max).astype(np.float32, copy=False)
                 output = np.clip(output, -1.0, 1.0)
 
-                # Apply cute/friendly voice processing in voice mode
-                if voice_processor is not None:
-                    output = voice_processor.process_chunk(output)
-                    if len(output) == 0:
-                        # Processor still buffering, skip this chunk
-                        continue
-
-                # Resample to speaker rate if necessary
+                # Resample to 24kHz if necessary
                 if speaker_rate != OPENAI_SAMPLE_RATE:
                     num_samples = int(len(output) * speaker_rate/ OPENAI_SAMPLE_RATE)
                     output = resample(output, num_samples)
