@@ -42,7 +42,7 @@ class ZeroAudioError(RuntimeError):
 # Wake model
 OPENAI_SAMPLE_RATE = 24000  # OpenAI real time conversations only support this sample rate
 OPENAI_TRANSCRIPTION_MODEL = "gpt-4o-mini-transcribe-2025-12-15"
-OPENAI_VOICE = "cedar"
+OPENAI_VOICE = "marin"
 
 WAKE_MODEL_NAME = "hey_marvin"
 WAKE_MODEL = Model(
@@ -282,7 +282,7 @@ async def run_conversation(
     stop_event = asyncio.Event()
 
     # Create a pitch shifter for cute voice effect
-    pitch_shifter = Pedalboard([PitchShift(semitones=6)])
+    pitch_shifter = Pedalboard([PitchShift(semitones=5)])
 
     last_activity_time = asyncio.get_event_loop().time()
 
