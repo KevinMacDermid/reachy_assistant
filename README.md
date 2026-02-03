@@ -1,15 +1,6 @@
-# Reachy Mini
-This is a small project to explore the Reachy Mini robot.
+# Reachy Mini Assistant
+This is a small project to set up the Reachy Mini robot as a voice assistant
 
-To Do:
- - Keep track of history and provide between conversations
- - (code) Clean up async handling - it's brittle now, should use a main coroutine "receive events" and have it cancel the others
-
-Other Ideas:
- - Make it possible to cancel emotion moves
- - Look based on direction of arrival
- - Face tracking + scan (look at you) (run in separate process)
- - Link / embed some of the existing apps (20 questions, hand tracking)
 
 ## Wake Word
 Using OpenWakeWord models, here's a Reachy specific one someone trained
@@ -43,7 +34,7 @@ The last line was the one that seemed to fix it.
 
 ## Install Dependencies
 Run 
-```
+```bash
 uv sync
 ```
 
@@ -54,48 +45,25 @@ without sudo privileges. See `visudo`
 
 
 # Running 
-Need to run the daemon and the application, with a watchdog that waits for the "audio samples are all 0" issue
-and then restarts USB hub.
+## Development Mode
+Can start the two processes separately:
+1. `uv run ./script/start_daemon.sh`
+2. `uv run python main.py`
 
-Note: Script for restarting interal hub had to be added as allowed in `visudo`, this is done on Frisket.
+## Always On Mode
+Runs the daemon, the main script, and uses a watchdog to reset the internal hub if all audio samples are 0
+
 ```bash
 uv run python run_reachy_supervisor.py
 ```
+This is hard coded to the parameters of Frisket currently.
 
-# Issues
-## Low Audio
-This is controlled by OS, can adjust with `alsamixer` for example.
 
-## Audio - All samples are 0.0
-Sometimes have trouble getting audio from the robot, not sure the problem yet,
-but saw that if an error is raised by the daemon it can be because the audio device
-is already claimed, you can check using
-```bash
-arecord -l
-```
-Don't leave the sound settings open, as they use the device.
+## To Do:
+ - Keep track of history and provide between conversations
+ - (code) Clean up async handling - it's brittle now, should use a main coroutine "receive events" and have it cancel the others
 
-### Issue 2: USB Hub Failure
-When I collect samples using robot.media.get_audio_sample(), I get samples, but they're all 0.0.
-
-Turns out, this is because the interal USB hub in Frisket gets stuck, the script `reset_internal_hub.sh` addresses
-this. Had to add edit sudoers to allow my user to always do this, see `visudo`
-
-Here are the debugging notes:
-Evidence:
- - Checked the mic on Pipewire, it's also reading no input.
- - Tried conversation app, it's also no longer getting input
- - ALSA driver is getting all zeroes
- - Plug Cycle fixes it
- - Power cycle of Reachy Mini does not fix it.
- - Pollen robotics could not reproduce
-
-Tested raw samples from driver with `arecord -D plughw:0,0 -d 5 -f S16_LE -r 16000 -t raw | od -x`,
-it's getting all zeroes.
-
-On Frisket, turned off USB suspend for this device using 
-`echo "on" | sudo tee /sys/bus/usb/devices/3-3/power/control`
-will see if it's caused by suspend or not. Didn't help.
-
-## Direction of Arrival Issue
-Had to adjust USB permissions, see installation section.
+Other Ideas:
+ - Look based on direction of arrival
+ - Face tracking + scan (look at you) (run in separate process)
+ - Link / embed some of the existing apps (20 questions, hand tracking)
