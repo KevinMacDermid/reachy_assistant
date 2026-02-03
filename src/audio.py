@@ -6,9 +6,20 @@ import time
 
 import numpy as np
 from openai.resources.realtime.realtime import AsyncRealtimeConnection
+from openai.types.realtime import (RealtimeSessionCreateRequestParam,
+                                   RealtimeAudioConfigParam,
+                                   RealtimeAudioConfigInputParam,
+                                   AudioTranscriptionParam,
+                                   RealtimeAudioConfigOutputParam)
+from openai.types.realtime.realtime_audio_formats_param import AudioPCM
+from openai.types.realtime.realtime_audio_input_turn_detection_param import SemanticVad
 from openwakeword.model import Model
+from pedalboard import Pedalboard
+from pedalboard_native import PitchShift
 from reachy_mini import ReachyMini
 from scipy.signal import resample
+
+from main import ConversationMode, TOOLS
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +37,88 @@ OPENAI_VOICE = "marin"
 ZERO_AUDIO_EXIT_CODE = 42
 class ZeroAudioError(RuntimeError):
     pass
+
+
+def get_openai_session_config(mode: ConversationMode) -> RealtimeSessionCreateRequestParam:
+    if mode == ConversationMode.BEBOOP:
+        beboop_prompt = f"""
+        You are a helpful little robot with just a head, no arms and legs. You're actually a 
+        reachy-mini robot from HuggingFace with the name Marvin.
+
+        You can't talk, so you will need to pick tools for displaying emotions or performing actions.
+        You can provide a response providing a very brief explanation for your tool choice. Generally pick an emotion
+        instead of a response every time.
+
+        If you're dismissed, or asked to go to sleep, call the "end_conversation" tool.
+
+        If there's a request about the conversation (other than ending it), then you should trigger change conversation
+        mode to voice.
+        """
+        return RealtimeSessionCreateRequestParam(
+            type="realtime",
+            output_modalities=["text"],
+            model=OPENAI_TRANSCRIPTION_MODEL,
+            instructions=beboop_prompt,
+            tool_choice="auto",
+            tools=TOOLS,
+            audio=RealtimeAudioConfigParam(
+                input=RealtimeAudioConfigInputParam(
+                    format=AudioPCM(
+                        type="audio/pcm",
+                        rate=24000
+                    ),
+                    transcription=AudioTranscriptionParam(
+                        model=OPENAI_TRANSCRIPTION_MODEL,
+                        language="en"),
+                    turn_detection=SemanticVad(type="semantic_vad", eagerness="low")
+
+                ),
+            ),
+        )
+    elif mode == ConversationMode.VOICE:
+        voice_prompt = f"""
+        You are a helpful little robot with just a head, no arms and legs. You're actually a 
+        reachy-mini robot from HuggingFace with the name Marvin. You can talk, as well 
+        as express yourself using the emotion too. Try to use emotions pretty often, alongside your
+        responses. 
+
+        Generally act friendly, maybe in an almost naive way, as you can talk but you're still a cute
+        little robot (don't explicitly point this out though). 
+
+        You speak english unless specifically asked to do otherwise.
+
+        If you're dismissed, or asked to go to sleep, call the "end_conversation" tool.
+        If you are asked something about changing conversation modes, it's probably to switch to BEBOOP mode,
+        unless you are clearly instructed otherwise.
+        """
+        return RealtimeSessionCreateRequestParam(
+            type="realtime",
+            output_modalities=["audio"],
+            model=OPENAI_TRANSCRIPTION_MODEL,
+            instructions=voice_prompt,
+            tool_choice="auto",
+            tools=TOOLS,
+            audio=RealtimeAudioConfigParam(
+                input=RealtimeAudioConfigInputParam(
+                    format=AudioPCM(
+                        type="audio/pcm",
+                        rate=24000
+                    ),
+                    transcription=AudioTranscriptionParam(
+                        model=OPENAI_TRANSCRIPTION_MODEL,
+                        language="en"),
+                    turn_detection=SemanticVad(type="semantic_vad", eagerness="low")
+                ),
+                output=RealtimeAudioConfigOutputParam(
+                    format=AudioPCM(
+                        type="audio/pcm",
+                        rate=24000),
+                    voice=OPENAI_VOICE
+                )
+            ),
+        )
+    else:
+        raise ValueError(f"Invalid voice mode {str(mode)} received")
 
 
 def listen_for_wakeword(reachy: ReachyMini) -> float:
@@ -117,5 +210,37 @@ async def send_audio_openai(
 
     except Exception as e:
         logger.error(f"Error sending audio: {e}")
+
+
+async def send_audio_speaker(
+        reachy: ReachyMini,
+        stop_event: asyncio.Event,
+        speaker_queue: "asyncio.Queue[NDArray[np.int16]]",
+):
+    """Outputs the audio from the conversation"""
+    # Create a pitch shifter for cute voice effect
+    speaker_rate = reachy.media.get_output_audio_samplerate()
+    pitch_shifter = Pedalboard([PitchShift(semitones=5)])
+    while True:
+        if stop_event.is_set():
+            return None
+        output =  await speaker_queue.get()
+        # Use None as an indication to stop listening (sentinel value)
+        if output is None:
+            return None
+
+        last_activity_time = asyncio.get_event_loop().time()
+        # Scale to float32 in range -1 to 1
+        output = (output / np.iinfo(np.int16).max).astype(np.float32, copy=False)
+        output = np.clip(output, -1.0, 1.0)
+
+        # Apply pitch shift for cute effect (maintains state across chunks to avoid discontinuities)
+        output = pitch_shifter(output.T, OPENAI_SAMPLE_RATE).T
+
+        # Resample to 24kHz if necessary
+        if speaker_rate != OPENAI_SAMPLE_RATE:
+            num_samples = int(len(output) * speaker_rate / OPENAI_SAMPLE_RATE)
+            output = resample(output, num_samples)
+        reachy.media.push_audio_sample(output)
 
 

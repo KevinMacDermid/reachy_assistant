@@ -10,29 +10,17 @@ import numpy as np
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from openai.types.realtime import (
-    RealtimeSessionCreateRequestParam,
-    RealtimeAudioConfigParam,
-    RealtimeAudioConfigInputParam,
-    AudioTranscriptionParam,
     RealtimeFunctionToolParam,
-    RealtimeAudioConfigOutputParam,
     RealtimeResponseCreateParamsParam
 )
-from openai.types.realtime.realtime_audio_formats_param import AudioPCM
-from openai.types.realtime.realtime_audio_input_turn_detection_param import SemanticVad
-from pedalboard import Pedalboard, PitchShift
 from reachy_mini import ReachyMini
 from reachy_mini.motion.recorded_move import RecordedMoves
-from scipy.signal import resample
 
 from src.audio import (
     listen_for_wakeword,
     ZeroAudioError,
     ZERO_AUDIO_EXIT_CODE,
-    OPENAI_SAMPLE_RATE, \
-    OPENAI_TRANSCRIPTION_MODEL,
-    OPENAI_VOICE,
-    send_audio_openai
+    send_audio_openai, send_audio_speaker, get_openai_session_config
 )
 from tools.emotions import EMOTIONS_MCP
 from tools.lights import LIGHTS_MCP, LightState, set_light_state
@@ -114,91 +102,6 @@ def _log_task_result(task: asyncio.Task[None]) -> None:
         logger.warning("Move task failed: %s", e)
 
 
-def _get_session_config(mode: ConversationMode) -> RealtimeSessionCreateRequestParam:
-    """
-    Gets the OpenAI session configuration
-    """
-    if mode == ConversationMode.BEBOOP:
-        beboop_prompt = f"""
-        You are a helpful little robot with just a head, no arms and legs. You're actually a 
-        reachy-mini robot from HuggingFace with the name Marvin.
-
-        You can't talk, so you will need to pick tools for displaying emotions or performing actions.
-        You can provide a response providing a very brief explanation for your tool choice. Generally pick an emotion
-        instead of a response every time.
-
-        If you're dismissed, or asked to go to sleep, call the "end_conversation" tool.
-        
-        If there's a request about the conversation (other than ending it), then you should trigger change conversation
-        mode to voice.
-        """
-        return RealtimeSessionCreateRequestParam(
-            type="realtime",
-            output_modalities=["text"],
-            model=OPENAI_TRANSCRIPTION_MODEL,
-            instructions=beboop_prompt,
-            tool_choice="auto",
-            tools=TOOLS,
-            audio=RealtimeAudioConfigParam(
-                input=RealtimeAudioConfigInputParam(
-                    format=AudioPCM(
-                        type="audio/pcm",
-                        rate=24000
-                    ),
-                    transcription=AudioTranscriptionParam(
-                        model=OPENAI_TRANSCRIPTION_MODEL,
-                        language="en"),
-                    turn_detection=SemanticVad(type="semantic_vad", eagerness="low")
-
-                ),
-            ),
-        )
-    elif mode == ConversationMode.VOICE:
-        voice_prompt = f"""
-        You are a helpful little robot with just a head, no arms and legs. You're actually a 
-        reachy-mini robot from HuggingFace with the name Marvin. You can talk, as well 
-        as express yourself using the emotion too. Try to use emotions pretty often, alongside your
-        responses. 
-        
-        Generally act friendly, maybe in an almost naive way, as you can talk but you're still a cute
-        little robot (don't explicitly point this out though). 
-        
-        You speak english unless specifically asked to do otherwise.
-
-        If you're dismissed, or asked to go to sleep, call the "end_conversation" tool.
-        If you are asked something about changing conversation modes, it's probably to switch to BEBOOP mode,
-        unless you are clearly instructed otherwise.
-        """
-        return RealtimeSessionCreateRequestParam(
-            type="realtime",
-            output_modalities=["audio"],
-            model=OPENAI_TRANSCRIPTION_MODEL,
-            instructions=voice_prompt,
-            tool_choice="auto",
-            tools=TOOLS,
-            audio=RealtimeAudioConfigParam(
-                input=RealtimeAudioConfigInputParam(
-                    format=AudioPCM(
-                        type="audio/pcm",
-                        rate=24000
-                    ),
-                    transcription=AudioTranscriptionParam(
-                        model=OPENAI_TRANSCRIPTION_MODEL,
-                        language="en"),
-                    turn_detection=SemanticVad(type="semantic_vad", eagerness="low")
-                ),
-                output=RealtimeAudioConfigOutputParam(
-                    format=AudioPCM(
-                        type="audio/pcm",
-                        rate=24000),
-                    voice=OPENAI_VOICE
-                )
-            ),
-        )
-    else:
-        raise ValueError(f"Invalid voice mode {str(mode)} received")
-
-
 async def run_conversation(
         reachy: ReachyMini,
         client: AsyncOpenAI,
@@ -216,19 +119,15 @@ async def run_conversation(
         mode_to_set: If provided, then conversation should be restarted in
             the associated mode.
     """
-    speaker_rate = reachy.media.get_output_audio_samplerate()
+    # Can move queue to send_audio_speaker once asyncio pattern cleaned up
     speaker_queue: "asyncio.Queue[NDArray[np.int16]]" = asyncio.Queue()
     stop_event = asyncio.Event()
-
-    # Create a pitch shifter for cute voice effect
-    pitch_shifter = Pedalboard([PitchShift(semitones=5)])
-
     last_activity_time = asyncio.get_event_loop().time()
 
     logger.info(f"Starting new conversation in {str(mode)}")
     async with client.realtime.connect(model="gpt-4o-realtime-preview") as conn:
         # Configure session for realtime conversation
-        session_config = _get_session_config(mode)
+        session_config = get_openai_session_config(mode)
         await conn.session.update(session=session_config)
         
         # In voice mode want to do a quick greeting
@@ -261,33 +160,6 @@ async def run_conversation(
                         return
             except asyncio.CancelledError:
                 raise
-
-
-        async def send_audio_speaker():
-            """Outputs the audio from the conversation"""
-            nonlocal  last_activity_time
-            while True:
-                if stop_event.is_set():
-                    return None
-                output =  await speaker_queue.get()
-                # Use None as an indication to stop listening (sentinel value)
-                if output is None:
-                    return None
-
-                last_activity_time = asyncio.get_event_loop().time()
-                # Scale to float32 in range -1 to 1
-                output = (output / np.iinfo(np.int16).max).astype(np.float32, copy=False)
-                output = np.clip(output, -1.0, 1.0)
-
-                # Apply pitch shift for cute effect (maintains state across chunks to avoid discontinuities)
-                output = pitch_shifter(output.T, OPENAI_SAMPLE_RATE).T
-
-                # Resample to 24kHz if necessary
-                if speaker_rate != OPENAI_SAMPLE_RATE:
-                    num_samples = int(len(output) * speaker_rate / OPENAI_SAMPLE_RATE)
-                    output = resample(output, num_samples)
-                reachy.media.push_audio_sample(output)
-
 
         async def receive_events():
             """Listen for transcription events."""
@@ -381,7 +253,7 @@ async def run_conversation(
         try:
             _, _, new_mode, _ = await asyncio.gather(
                 send_audio_openai(reachy, stop_event, conn),
-                send_audio_speaker(),
+                send_audio_speaker(reachy, stop_event, speaker_queue),
                 receive_events(),
                 watchdog_task)
         finally:
