@@ -4,15 +4,11 @@ import json
 import logging
 import os
 import sys
-from enum import Enum
 
 import numpy as np
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
-from openai.types.realtime import (
-    RealtimeFunctionToolParam,
-    RealtimeResponseCreateParamsParam
-)
+from openai.types.realtime import RealtimeResponseCreateParamsParam
 from reachy_mini import ReachyMini
 from reachy_mini.motion.recorded_move import RecordedMoves
 
@@ -20,77 +16,20 @@ from src.audio import (
     listen_for_wakeword,
     ZeroAudioError,
     ZERO_AUDIO_EXIT_CODE,
-    send_audio_openai, send_audio_speaker, get_openai_session_config
+    send_audio_openai,
+    send_audio_speaker,
+    get_openai_session_config,
+    ConversationMode
 )
-from tools.emotions import EMOTIONS_MCP
-from tools.lights import LIGHTS_MCP, LightState, set_light_state
+from tools.lights import LightState, set_light_state
 
 _ = load_dotenv()
 logger = logging.getLogger(__name__)
-
-
-class ConversationMode(Enum):
-    BEBOOP = "beboop"
-    VOICE = "voice"
 
 # Silent Robot
 EMOTION_MOVES = RecordedMoves("pollen-robotics/reachy-mini-emotions-library")
 MOVE_GOTO_DURATION = 0.5
 USER_IDLE_TIMEOUT = 30.0
-
-# Tools
-TOOLS = []
-for tool in asyncio.run(LIGHTS_MCP.list_tools()):
-    TOOLS.append(
-        RealtimeFunctionToolParam(
-            name=tool.name,
-            description=tool.description,
-            parameters=tool.inputSchema,
-            type="function",
-        )
-    )
-for tool in asyncio.run(EMOTIONS_MCP.list_tools()):
-    TOOLS.append(
-        RealtimeFunctionToolParam(
-            name=tool.name,
-            description=tool.description,
-            parameters=tool.inputSchema,
-            type="function",
-        )
-    )
-
-TOOLS.append(
-    RealtimeFunctionToolParam(
-        name="end_conversation",
-        description="Ends the current conversation session when the user dismisses the assistant, or puts it to sleep",
-        parameters={
-            "type": "object",
-            "properties": {},
-            "required": [],
-        },
-        type="function"
-    )
-)
-
-TOOLS.append(
-    RealtimeFunctionToolParam(
-        name="change_conversation_mode",
-        description="Switch between a robot mode (also called Beboop mode) and a voice mode.",
-        parameters = {
-            "type": "object",
-            "properties": {
-                "mode": {
-                    "type": "string",
-                    "enum": [m.value for m in ConversationMode],
-                    "description": "Which conversation mode to switch to.",
-                }
-            },
-            "required": ["mode"],
-            "additionalProperties": False,
-        },
-        type = "function"
-    )
-)
 
 
 def _log_task_result(task: asyncio.Task[None]) -> None:
@@ -222,7 +161,7 @@ async def run_conversation(
                                     logger.info(f"Tool call: set_light_state → {result_text}")
                                     await reachy.async_play_move(EMOTION_MOVES.get("success1"),
                                                                  initial_goto_duration=MOVE_GOTO_DURATION)
-                                    # Generally stop after first light command
+                                    # Generally stop after the first light command
                                     stop_event.set()
                                     speaker_queue.put_nowait(None)
                                     await conn.close()
@@ -247,26 +186,45 @@ async def run_conversation(
                     logger.debug(f"Got unhandled event {str(event.type)}", )
 
         logger.info("Conversation Started... (Ctrl+C to stop)")
+
+        send_task = asyncio.create_task(send_audio_openai(reachy, stop_event, conn))
+        speaker_task = asyncio.create_task(send_audio_speaker(reachy, stop_event, speaker_queue))
+        recv_task = asyncio.create_task(receive_events())
         watchdog_task = asyncio.create_task(idle_watchdog())
-        new_mode = None
-        # ToDo: Change this to only wait on receive_events(), all others get cancelled when it completes
+
+        new_conv_mode = None
         try:
-            _, _, new_mode, _ = await asyncio.gather(
-                send_audio_openai(reachy, stop_event, conn),
-                send_audio_speaker(reachy, stop_event, speaker_queue),
-                receive_events(),
-                watchdog_task)
-        finally:
-            stop_event.set()
-            speaker_queue.put_nowait(None)
-            watchdog_task.cancel()
-            if new_mode is None:
+            # We wait for only receive_events or watchdog to end all coroutines
+            done, pending = await asyncio.wait(
+                {recv_task, watchdog_task},
+                return_when=asyncio.FIRST_COMPLETED
+            )
+
+            # If receive_events returned a mode, capture it
+            if recv_task in done and not recv_task.cancelled():
+                new_conv_mode = recv_task.result()
+
+            if new_conv_mode is None:
                 reachy.goto_sleep()
+
+        finally:
+            # Sends event to all coroutines, may be overkill as they cancel anyway
+            stop_event.set()
+
+            # Unblock speaker loop
+            speaker_queue.put_nowait(None)
+
+            # Cancel everything still running
+            for t in (send_task, speaker_task, recv_task, watchdog_task):
+                if not t.done():
+                    t.cancel()
+
             try:
                 await watchdog_task
             except asyncio.CancelledError:
                 pass
-        return new_mode
+
+        return new_conv_mode
 
 
 def main():

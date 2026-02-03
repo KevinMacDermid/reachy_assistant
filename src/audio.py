@@ -3,6 +3,10 @@ import base64
 import logging
 import os
 import time
+from tools.lights import LIGHTS_MCP
+from tools.emotions import EMOTIONS_MCP
+
+from enum import Enum
 
 import numpy as np
 from openai.resources.realtime.realtime import AsyncRealtimeConnection
@@ -10,7 +14,7 @@ from openai.types.realtime import (RealtimeSessionCreateRequestParam,
                                    RealtimeAudioConfigParam,
                                    RealtimeAudioConfigInputParam,
                                    AudioTranscriptionParam,
-                                   RealtimeAudioConfigOutputParam)
+                                   RealtimeAudioConfigOutputParam, RealtimeFunctionToolParam)
 from openai.types.realtime.realtime_audio_formats_param import AudioPCM
 from openai.types.realtime.realtime_audio_input_turn_detection_param import SemanticVad
 from openwakeword.model import Model
@@ -18,8 +22,6 @@ from pedalboard import Pedalboard
 from pedalboard_native import PitchShift
 from reachy_mini import ReachyMini
 from scipy.signal import resample
-
-from main import ConversationMode, TOOLS
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +40,66 @@ ZERO_AUDIO_EXIT_CODE = 42
 class ZeroAudioError(RuntimeError):
     pass
 
+
+class ConversationMode(Enum):
+    BEBOOP = "beboop"
+    VOICE = "voice"
+
+
+# Tools
+# ToDo: move to separate file in tools
+TOOLS = []
+for tool in asyncio.run(LIGHTS_MCP.list_tools()):
+    TOOLS.append(
+        RealtimeFunctionToolParam(
+            name=tool.name,
+            description=tool.description,
+            parameters=tool.inputSchema,
+            type="function",
+        )
+    )
+for tool in asyncio.run(EMOTIONS_MCP.list_tools()):
+    TOOLS.append(
+        RealtimeFunctionToolParam(
+            name=tool.name,
+            description=tool.description,
+            parameters=tool.inputSchema,
+            type="function",
+        )
+    )
+
+TOOLS.append(
+    RealtimeFunctionToolParam(
+        name="end_conversation",
+        description="Ends the current conversation session when the user dismisses the assistant, or puts it to sleep",
+        parameters={
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+        type="function"
+    )
+)
+
+TOOLS.append(
+    RealtimeFunctionToolParam(
+        name="change_conversation_mode",
+        description="Switch between a robot mode (also called Beboop mode) and a voice mode.",
+        parameters = {
+            "type": "object",
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "enum": [m.value for m in ConversationMode],
+                    "description": "Which conversation mode to switch to.",
+                }
+            },
+            "required": ["mode"],
+            "additionalProperties": False,
+        },
+        type = "function"
+    )
+)
 
 def get_openai_session_config(mode: ConversationMode) -> RealtimeSessionCreateRequestParam:
     if mode == ConversationMode.BEBOOP:
