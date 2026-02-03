@@ -22,6 +22,7 @@ from openai.types.realtime import (
 from openai.types.realtime.realtime_audio_formats_param import AudioPCM
 from openai.types.realtime.realtime_audio_input_turn_detection_param import SemanticVad
 from openwakeword.model import Model
+from pedalboard import Pedalboard, PitchShift
 from reachy_mini import ReachyMini
 from reachy_mini.motion.recorded_move import RecordedMoves
 from scipy.signal import resample
@@ -280,6 +281,9 @@ async def run_conversation(
     speaker_queue: "asyncio.Queue[NDArray[np.int16]]" = asyncio.Queue()
     stop_event = asyncio.Event()
 
+    # Create a pitch shifter for cute voice effect
+    pitch_shifter = Pedalboard([PitchShift(semitones=6)])
+
     last_activity_time = asyncio.get_event_loop().time()
 
     logger.info(f"Starting new conversation in {str(mode)}")
@@ -366,11 +370,14 @@ async def run_conversation(
                 # Use None as an indication to stop listening (sentinel value)
                 if output is None:
                     return None
-                
+
                 last_activity_time = asyncio.get_event_loop().time()
                 # Scale to float32 in range -1 to 1
                 output = (output / np.iinfo(np.int16).max).astype(np.float32, copy=False)
                 output = np.clip(output, -1.0, 1.0)
+
+                # Apply pitch shift for cute effect (maintains state across chunks to avoid discontinuities)
+                output = pitch_shifter(output.T, OPENAI_SAMPLE_RATE).T
 
                 # Resample to 24kHz if necessary
                 if speaker_rate != OPENAI_SAMPLE_RATE:
@@ -492,11 +499,11 @@ def main():
     Main conversation App
     """
     client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
-    conv_mode = ConversationMode.BEBOOP
-    skip_wakeword = False
+    conv_mode = ConversationMode.VOICE
+    skip_wakeword = True
     # Tried starting the daemon here, but it wouldn't work, start it separately
     with ReachyMini(automatic_body_yaw=True) as reachy:
-        reachy.goto_sleep()
+        #reachy.goto_sleep()
         while True:
             reachy.media.start_recording()
             reachy.media.start_playing()

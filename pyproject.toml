@@ -13,6 +13,5 @@ dependencies = [
     "openai",
     "flux_led==1.2.0",
     "numpy==2.2.5",
-    "librosa",
-    "numba==0.63.0rc1"
+    "pedalboard"
 ]
