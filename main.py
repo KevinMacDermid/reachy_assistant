@@ -499,11 +499,11 @@ def main():
     Main conversation App
     """
     client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
-    conv_mode = ConversationMode.VOICE
-    skip_wakeword = True
+    conv_mode = ConversationMode.BEBOOP
+    skip_wakeword = False
     # Tried starting the daemon here, but it wouldn't work, start it separately
     with ReachyMini(automatic_body_yaw=True) as reachy:
-        #reachy.goto_sleep()
+        reachy.goto_sleep()
         while True:
             reachy.media.start_recording()
             reachy.media.start_playing()
