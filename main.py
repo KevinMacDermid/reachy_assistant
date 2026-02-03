@@ -90,8 +90,6 @@ async def run_conversation(
                             (now - last_activity_time),
                             USER_IDLE_TIMEOUT,
                         )
-                        speaker_queue.put_nowait(None)
-                        stop_event.set()
                         try:
                             await conn.close()
                         except Exception:
@@ -137,8 +135,6 @@ async def run_conversation(
                             tool_name = output.name
                             if tool_name == "end_conversation":
                                 logger.info("Tool call: end_conversation → stopping conversation loop.")
-                                stop_event.set()
-                                speaker_queue.put_nowait(None)
                                 await conn.close()
                                 return None
                             elif tool_name == "change_conversation_mode":
@@ -147,8 +143,6 @@ async def run_conversation(
                                 if new_mode_req != mode:
                                     logger.info(f"New Mode {str(new_mode_req)} differs from {str(mode)}, switching")
                                     # Finish conversation to avoid issues with partial responses
-                                    stop_event.set()
-                                    speaker_queue.put_nowait(None)
                                     await conn.close()
                                     return new_mode_req
                             elif tool_name == "set_light_state":
@@ -162,8 +156,6 @@ async def run_conversation(
                                     await reachy.async_play_move(EMOTION_MOVES.get("success1"),
                                                                  initial_goto_duration=MOVE_GOTO_DURATION)
                                     # Generally stop after the first light command
-                                    stop_event.set()
-                                    speaker_queue.put_nowait(None)
                                     await conn.close()
                                     return None
                             elif tool_name == "show_emotion":

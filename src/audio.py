@@ -3,6 +3,9 @@ import base64
 import logging
 import os
 import time
+
+from websockets import ConnectionClosedOK
+
 from tools.lights import LIGHTS_MCP
 from tools.emotions import EMOTIONS_MCP
 
@@ -270,6 +273,8 @@ async def send_audio_openai(
             base64_audio = base64.b64encode(chunk.tobytes()).decode("utf-8")
             await conn.input_audio_buffer.append(audio=base64_audio)
 
+    except ConnectionClosedOK:
+        logger.info("Closing input audio connection successful")   # suppresses an error log
     except Exception as e:
         logger.error(f"Error sending audio: {e}")
 
@@ -279,7 +284,7 @@ async def send_audio_speaker(
         stop_event: asyncio.Event,
         speaker_queue: "asyncio.Queue[NDArray[np.int16]]",
 ):
-    """Outputs the audio from the conversation"""
+    """Outputs the audio to the reachy speaker in chunks"""
     # Create a pitch shifter for cute voice effect
     speaker_rate = reachy.media.get_output_audio_samplerate()
     pitch_shifter = Pedalboard([PitchShift(semitones=5)])
