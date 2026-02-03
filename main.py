@@ -4,7 +4,6 @@ import json
 import logging
 import os
 import sys
-import time
 from enum import Enum
 
 import numpy as np
@@ -21,34 +20,22 @@ from openai.types.realtime import (
 )
 from openai.types.realtime.realtime_audio_formats_param import AudioPCM
 from openai.types.realtime.realtime_audio_input_turn_detection_param import SemanticVad
-from openwakeword.model import Model
 from pedalboard import Pedalboard, PitchShift
 from reachy_mini import ReachyMini
 from reachy_mini.motion.recorded_move import RecordedMoves
 from scipy.signal import resample
 
+from src.audio import listen_for_wakeword, ZeroAudioError, ZERO_AUDIO_EXIT_CODE
 from tools.emotions import EMOTIONS_MCP
 from tools.lights import LIGHTS_MCP, LightState, set_light_state
 
 _ = load_dotenv()
 logger = logging.getLogger(__name__)
 
-# Exit code for supervisor to detect zero-audio failures.
-ZERO_AUDIO_EXIT_CODE = 42
-class ZeroAudioError(RuntimeError):
-    pass
 
-
-# Wake model
 OPENAI_SAMPLE_RATE = 24000  # OpenAI real time conversations only support this sample rate
 OPENAI_TRANSCRIPTION_MODEL = "gpt-4o-mini-transcribe-2025-12-15"
 OPENAI_VOICE = "marin"
-
-WAKE_MODEL_NAME = "hey_marvin"
-WAKE_MODEL = Model(
-        wakeword_model_paths=[os.path.join(os.path.dirname(__file__), "models", f"{WAKE_MODEL_NAME}.onnx")]
-    )
-WAKE_THRESHOLD=0.3
 
 class ConversationMode(Enum):
     BEBOOP = "beboop"
@@ -112,57 +99,6 @@ TOOLS.append(
         type = "function"
     )
 )
-
-
-def _listen_for_wakeword(reachy: ReachyMini) -> float:
-    """
-    Blocks until the wakeword is received.
-    Returns:
-        direction_of_arrival: The direction the sound came from
-    """
-    mic_rate = reachy.media.get_input_audio_samplerate()
-    frames = 1280 * 8  # OpenWakeWord wants multiples of 1280 samples -> longer means more latency
-    delay_s = frames / mic_rate
-    time.sleep(delay_s)
-    doa = 0
-
-    logger.info(f"Starting wakeword listening using model {WAKE_MODEL_NAME}")
-    while True:
-        # Get audio
-        chunk = reachy.media.get_audio_sample()
-        if chunk is None:
-            continue
-
-        #doa = reachy.media.get_DoA()[0]
-
-        # Take single channel
-        if chunk.ndim == 2:
-            chunk = chunk[:, 0]
-
-        # Scale to int16
-        if chunk.dtype != np.int16:
-            # Reachy’s audio is float32 in [-1, 1]; scale and clip before casting
-            chunk = np.clip(chunk, -1.0, 1.0)
-            chunk = (chunk * np.iinfo(np.int16).max).astype(np.int16, copy=False)
-
-        if np.all(chunk == 0):
-            logger.error("All audio samples are zero going to wake word model!")
-            raise ZeroAudioError("Zero audio samples detected")
-
-        # OpenWakeWord model has buffer internally, so just send latest chunk
-        pred = WAKE_MODEL.predict(chunk)[WAKE_MODEL_NAME]
-
-        logger.debug(f"Wake prediction = {pred}")
-        if pred >= WAKE_THRESHOLD:
-            logger.info(f"Wake word detected with DoA {doa}")
-            WAKE_MODEL.reset()  # reset the wake model's internal buffer
-            break
-
-        time.sleep(delay_s)
-
-    logger.info("Wakeword Received!")
-    #reachy.set_target_body_yaw(-1 * doa)
-    return doa
 
 
 def _log_task_result(task: asyncio.Task[None]) -> None:
@@ -509,7 +445,7 @@ def main():
             reachy.media.start_playing()
             try:
                 if not skip_wakeword:
-                    _ = _listen_for_wakeword(reachy)
+                    _ = listen_for_wakeword(reachy)
                     reachy.wake_up()
                 else:
                     skip_wakeword = False
