@@ -25,17 +25,21 @@ from reachy_mini import ReachyMini
 from reachy_mini.motion.recorded_move import RecordedMoves
 from scipy.signal import resample
 
-from src.audio import listen_for_wakeword, ZeroAudioError, ZERO_AUDIO_EXIT_CODE
+from src.audio import (
+    listen_for_wakeword,
+    ZeroAudioError,
+    ZERO_AUDIO_EXIT_CODE,
+    OPENAI_SAMPLE_RATE, \
+    OPENAI_TRANSCRIPTION_MODEL,
+    OPENAI_VOICE,
+    send_audio_openai
+)
 from tools.emotions import EMOTIONS_MCP
 from tools.lights import LIGHTS_MCP, LightState, set_light_state
 
 _ = load_dotenv()
 logger = logging.getLogger(__name__)
 
-
-OPENAI_SAMPLE_RATE = 24000  # OpenAI real time conversations only support this sample rate
-OPENAI_TRANSCRIPTION_MODEL = "gpt-4o-mini-transcribe-2025-12-15"
-OPENAI_VOICE = "marin"
 
 class ConversationMode(Enum):
     BEBOOP = "beboop"
@@ -212,7 +216,6 @@ async def run_conversation(
         mode_to_set: If provided, then conversation should be restarted in
             the associated mode.
     """
-    mic_rate = reachy.media.get_input_audio_samplerate()
     speaker_rate = reachy.media.get_output_audio_samplerate()
     speaker_queue: "asyncio.Queue[NDArray[np.int16]]" = asyncio.Queue()
     stop_event = asyncio.Event()
@@ -259,42 +262,6 @@ async def run_conversation(
             except asyncio.CancelledError:
                 raise
 
-        async def send_audio_openai():
-            """Continuously poll mic and send to OpenAI."""
-            nonlocal last_activity_time
-            try:
-                while not stop_event.is_set():
-                    chunk = reachy.media.get_audio_sample()
-                    last_activity_time = asyncio.get_event_loop().time()
-
-                    if chunk is None:
-                        await asyncio.sleep(0.1)
-                        continue
-
-                    # Take single channel
-                    if chunk.ndim == 2:
-                        chunk = chunk[:, 0]
-
-                    # Resample to 24kHz if necessary
-                    if mic_rate != OPENAI_SAMPLE_RATE:
-                        num_samples = int(len(chunk) * OPENAI_SAMPLE_RATE / mic_rate)
-                        chunk = resample(chunk, num_samples)
-
-                    # Scale to int16
-                    if chunk.dtype != np.int16:
-                        # Reachy’s audio is float32 in [-1, 1]; scale and clip before casting
-                        chunk = np.clip(chunk, -1.0, 1.0)
-                        chunk = (chunk * np.iinfo(np.int16).max).astype(np.int16, copy=False)
-
-                    # Encode and put in buffer
-                    if np.all(chunk == 0):
-                        print("Transcribe chunk is all zeroes")
-
-                    base64_audio = base64.b64encode(chunk.tobytes()).decode("utf-8")
-                    await conn.input_audio_buffer.append(audio=base64_audio)
-
-            except Exception as e:
-                logger.error(f"Error sending audio: {e}")
 
         async def send_audio_speaker():
             """Outputs the audio from the conversation"""
@@ -317,7 +284,7 @@ async def run_conversation(
 
                 # Resample to 24kHz if necessary
                 if speaker_rate != OPENAI_SAMPLE_RATE:
-                    num_samples = int(len(output) * speaker_rate/ OPENAI_SAMPLE_RATE)
+                    num_samples = int(len(output) * speaker_rate / OPENAI_SAMPLE_RATE)
                     output = resample(output, num_samples)
                 reachy.media.push_audio_sample(output)
 
@@ -413,7 +380,7 @@ async def run_conversation(
         # ToDo: Change this to only wait on receive_events(), all others get cancelled when it completes
         try:
             _, _, new_mode, _ = await asyncio.gather(
-                send_audio_openai(),
+                send_audio_openai(reachy, stop_event, conn),
                 send_audio_speaker(),
                 receive_events(),
                 watchdog_task)

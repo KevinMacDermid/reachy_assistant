@@ -1,9 +1,14 @@
-import time
-import numpy as np
-import os
-from reachy_mini import ReachyMini
-from openwakeword.model import Model
+import asyncio
+import base64
 import logging
+import os
+import time
+
+import numpy as np
+from openai.resources.realtime.realtime import AsyncRealtimeConnection
+from openwakeword.model import Model
+from reachy_mini import ReachyMini
+from scipy.signal import resample
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +17,10 @@ WAKE_MODEL = Model(
         wakeword_model_paths=[os.path.join(os.path.dirname(__file__), "..", "models", f"{WAKE_MODEL_NAME}.onnx")]
     )
 WAKE_THRESHOLD=0.3
+
+OPENAI_SAMPLE_RATE = 24000  # OpenAI realtime conversations only support this sample rate
+OPENAI_TRANSCRIPTION_MODEL = "gpt-4o-mini-transcribe-2025-12-15"
+OPENAI_VOICE = "marin"
 
 # Exit code for supervisor to detect zero-audio failures.
 ZERO_AUDIO_EXIT_CODE = 42
@@ -40,7 +49,7 @@ def listen_for_wakeword(reachy: ReachyMini) -> float:
 
         #doa = reachy.media.get_DoA()[0]
 
-        # Take single channel
+        # Take a single channel
         if chunk.ndim == 2:
             chunk = chunk[:, 0]
 
@@ -68,3 +77,45 @@ def listen_for_wakeword(reachy: ReachyMini) -> float:
     logger.info("Wakeword Received!")
     #reachy.set_target_body_yaw(-1 * doa)
     return doa
+
+
+async def send_audio_openai(
+        reachy: ReachyMini,
+        stop_event: asyncio.Event,
+        conn: AsyncRealtimeConnection):
+    """Continuously poll mic and send to OpenAI."""
+    mic_rate = reachy.media.get_input_audio_samplerate()
+    try:
+        while not stop_event.is_set():
+            chunk = reachy.media.get_audio_sample()
+
+            if chunk is None:
+                await asyncio.sleep(0.1)
+                continue
+
+            # Take a single channel
+            if chunk.ndim == 2:
+                chunk = chunk[:, 0]
+
+            # Resample to 24kHz if necessary
+            if mic_rate != OPENAI_SAMPLE_RATE:
+                num_samples = int(len(chunk) * OPENAI_SAMPLE_RATE / mic_rate)
+                chunk = resample(chunk, num_samples)
+
+            # Scale to int16
+            if chunk.dtype != np.int16:
+                # Reachy’s audio is float32 in [-1, 1]; scale and clip before casting
+                chunk = np.clip(chunk, -1.0, 1.0)
+                chunk = (chunk * np.iinfo(np.int16).max).astype(np.int16, copy=False)
+
+            # Encode and put in buffer
+            if np.all(chunk == 0):
+                print("Transcribe chunk is all zeroes")
+
+            base64_audio = base64.b64encode(chunk.tobytes()).decode("utf-8")
+            await conn.input_audio_buffer.append(audio=base64_audio)
+
+    except Exception as e:
+        logger.error(f"Error sending audio: {e}")
+
+
