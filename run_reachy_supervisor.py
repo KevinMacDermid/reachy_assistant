@@ -76,13 +76,7 @@ def main() -> int:
                 return reset_code
 
             # Set the volume level after restarting
-            subprocess.run([
-                "amixer",
-                "set",
-                "-M",
-                "PCM,1",
-                "85%"
-            ], check=True)
+            subprocess.run(["amixer","set", "-M",'"PCM",1', "85%"], check=True)
 
             print("Waiting before restarting daemon")
             sleep(20)
