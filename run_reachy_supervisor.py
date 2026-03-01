@@ -77,6 +77,15 @@ def main() -> int:
                 print(f"reset_internal_hub.sh failed with exit code {reset_code}", file=sys.stderr)
                 return reset_code
 
+            # Set the volume level after restarting
+            subprocess.run([
+                "amixer",
+                "set",
+                "-M",
+                "PCM,1",
+                "85%"
+            ], check=True)
+
             print("Waiting before restarting daemon")
             sleep(20)
 
