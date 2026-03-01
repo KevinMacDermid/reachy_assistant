@@ -3,7 +3,9 @@ import os
 import signal
 import subprocess
 import sys
+import traceback
 from pathlib import Path
+from subprocess import CalledProcessError
 from time import sleep
 
 from main import ZERO_AUDIO_EXIT_CODE
@@ -75,17 +77,16 @@ def main() -> int:
                 print(f"reset_internal_hub.sh failed with exit code {reset_code}", file=sys.stderr)
                 return reset_code
 
-            # Set the volume level after restarting
-            subprocess.run([
-                "amixer",
-                "set",
-                "-M",
-                "PCM,1",
-                "85%"
-            ], check=True)
-
             print("Waiting before restarting daemon")
             sleep(20)
+
+            try:
+                # Set the volume level after restarting
+                subprocess.run(["amixer", "set", "-M", '"PCM",1', "85%"], check=True)
+            except CalledProcessError as e:
+                print(f"SET VOLUME FAILED: Error {e}")
+                traceback.print_exc()
+
             continue
 
         _terminate_process_group(daemon_proc, "reachy-mini-daemon")
