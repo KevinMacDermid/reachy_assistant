@@ -1,6 +1,10 @@
 # Reachy Mini Assistant
 This is a small project to set up the Reachy Mini robot as a voice assistant
 
+# !ISSUE: Cannot Update reachy-mini
+Tried to update but newer versions rely on GStreamer, and the Ubuntu on
+this machine is too old for that.
+ - Could run it via Docker
 
 ## Wake Word
 Using OpenWakeWord models, here's a Reachy specific one someone trained
