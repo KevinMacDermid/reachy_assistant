@@ -227,7 +227,10 @@ def main():
     conv_mode = ConversationMode.BEBOOP
     skip_wakeword = False
     # Tried starting the daemon here, but it wouldn't work, start it separately
-    with ReachyMini(automatic_body_yaw=True) as reachy:
+    with ReachyMini(
+        automatic_body_yaw=True,
+        connection_mode="localhost_only",
+    ) as reachy:
         reachy.goto_sleep()
         while True:
             reachy.media.start_recording()

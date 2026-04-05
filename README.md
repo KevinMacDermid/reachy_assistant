@@ -38,6 +38,15 @@ Run
 uv sync
 ```
 
+## Set Libffi Version
+With reachy-mini 1.6.0 had issue where it tries to pull wrong libffi version,
+had to add the following environment variable to .bashrc
+
+```bash
+LD_PRELOAD=/lib/x86_64-linux-gnu/libffi.so.7
+```
+
+
 ## Add Run Internal to Sudoers
 On Frisket, had issue where the internal hub of the laptop gets stuck, added a script for this 
 `./script/reset_internal_hub.sh`, had to adjust sudoers to allow my user to be able to run this
