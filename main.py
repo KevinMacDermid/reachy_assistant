@@ -64,7 +64,7 @@ async def run_conversation(
     last_activity_time = asyncio.get_event_loop().time()
 
     logger.info(f"Starting new conversation in {str(mode)}")
-    async with client.realtime.connect(model="gpt-4o-realtime-preview") as conn:
+    async with client.realtime.connect(model="gpt-realtime") as conn:
         # Configure session for realtime conversation
         session_config = get_openai_session_config(mode)
         await conn.session.update(session=session_config)
